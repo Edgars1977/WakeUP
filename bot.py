@@ -14,6 +14,7 @@ import re
 import sqlite3
 import logging
 from datetime import datetime, timedelta
+from html import escape as html_escape
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
@@ -100,6 +101,14 @@ QUESTIONS = {
     ],
 }
 
+# Īsi tematiskie apzīmējumi katram no 5 jautājumiem — lieto vēstures/šodienas
+# ieraksta kompaktajā attēlošanā, nevis pilnu jautājuma tekstu katru reizi.
+TOPIC_LABELS = {
+    "lv": ["🙏 Pateicība", "🏆 Uzvara", "⚠️ Problēma", "🎯 Nodoms", "🌌 Jautājums Visumam"],
+    "en": ["🙏 Gratitude", "🏆 Win", "⚠️ Challenge", "🎯 Intention", "🌌 Question to the Universe"],
+    "ru": ["🙏 Благодарность", "🏆 Победа", "⚠️ Проблема", "🎯 Намерение", "🌌 Вопрос Вселенной"],
+}
+
 TEXTS = {
     "lv": {
         "greeting_named": "Sveiks, {name}! 👋",
@@ -127,7 +136,8 @@ TEXTS = {
         "thanks_saved": "Paldies! Šodienas ieraksts saglabāts. 🌅",
         "no_entries": "Vēl nav neviena ieraksta.",
         "no_entries_for_date": "Nav ierakstu par {date}.",
-        "entry_header": "📓 Ieraksts — {date}\n",
+        "today_label": "Šodien",
+        "yesterday_label": "Vakar",
         "intro": (
             "Reizi dienā, plkst. {time}, es tev uzdošu 5 refleksijas jautājumus — "
             "par pateicību, uzvarām, izaicinājumiem un nodomiem. Kad būsi atbildējis "
@@ -169,7 +179,8 @@ TEXTS = {
         "thanks_saved": "Thanks! Today's entry is saved. 🌅",
         "no_entries": "No entries yet.",
         "no_entries_for_date": "No entries for {date}.",
-        "entry_header": "📓 Entry — {date}\n",
+        "today_label": "Today",
+        "yesterday_label": "Yesterday",
         "intro": (
             "Once a day, at {time}, I'll ask you 5 reflection questions — "
             "about gratitude, wins, challenges, and intentions. Once you've "
@@ -211,7 +222,8 @@ TEXTS = {
         "thanks_saved": "Спасибо! Сегодняшняя запись сохранена. 🌅",
         "no_entries": "Пока нет записей.",
         "no_entries_for_date": "Нет записей за {date}.",
-        "entry_header": "📓 Запись — {date}\n",
+        "today_label": "Сегодня",
+        "yesterday_label": "Вчера",
         "intro": (
             "Раз в день, в {time}, я буду задавать тебе 5 вопросов для "
             "рефлексии — о благодарности, победах, проблемах и намерениях. "
@@ -418,25 +430,43 @@ async def transcribe_voice(file_path_ogg: str, lang: str) -> str:
     return result.text.strip()
 
 
+def relative_date_label(date_str, lang):
+    try:
+        d = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        return date_str
+    today = datetime.now(TIMEZONE).date()
+    if d == today:
+        return t(lang, "today_label")
+    if d == today - timedelta(days=1):
+        return t(lang, "yesterday_label")
+    return date_str
+
+
 def format_entry(chat_id, date, lang) -> str:
     conn = db()
     rows = conn.execute(
-        "SELECT question_text, answer_text FROM answers "
+        "SELECT question_index, answer_text FROM answers "
         "WHERE chat_id=? AND date=? ORDER BY question_index",
         (chat_id, date),
     ).fetchall()
     conn.close()
+    label = relative_date_label(date, lang)
     if not rows:
-        return t(lang, "no_entries_for_date", date=date)
-    lines = [t(lang, "entry_header", date=date)]
-    for q, a in rows:
-        lines.append(f"❓ {q}\n💬 {a}\n")
+        return t(lang, "no_entries_for_date", date=html_escape(label))
+    topic_labels = TOPIC_LABELS.get(lang, TOPIC_LABELS[DEFAULT_LANGUAGE])
+    lines = [f"<b>📓 {html_escape(label)}</b>"]
+    for idx, a in rows:
+        topic = topic_labels[idx] if idx < len(topic_labels) else f"Q{idx + 1}"
+        lines.append(f"<b>{html_escape(topic)}:</b> {html_escape(a)}")
     return "\n".join(lines)
 
 
 async def send_today_entry(chat_id, context: ContextTypes.DEFAULT_TYPE):
     lang = get_user_language(chat_id)
-    await context.bot.send_message(chat_id=chat_id, text=format_entry(chat_id, today_str(), lang))
+    await context.bot.send_message(
+        chat_id=chat_id, text=format_entry(chat_id, today_str(), lang), parse_mode="HTML"
+    )
 
 
 async def send_history_entries(chat_id, n, context: ContextTypes.DEFAULT_TYPE):
@@ -451,7 +481,9 @@ async def send_history_entries(chat_id, n, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat_id, text=t(lang, "no_entries"))
         return
     for (date,) in dates:
-        await context.bot.send_message(chat_id=chat_id, text=format_entry(chat_id, date, lang))
+        await context.bot.send_message(
+            chat_id=chat_id, text=format_entry(chat_id, date, lang), parse_mode="HTML"
+        )
 
 
 async def prompt_language_change(chat_id, context: ContextTypes.DEFAULT_TYPE):
@@ -671,7 +703,9 @@ async def _save_answer_and_advance(chat_id, date, idx, lang, answer_text, is_voi
         conn.commit()
         conn.close()
         await context.bot.send_message(chat_id=chat_id, text=t(lang, "thanks_saved"))
-        await context.bot.send_message(chat_id=chat_id, text=format_entry(chat_id, date, lang))
+        await context.bot.send_message(
+            chat_id=chat_id, text=format_entry(chat_id, date, lang), parse_mode="HTML"
+        )
     else:
         conn.execute(
             "UPDATE sessions SET current_index=? WHERE chat_id=? AND date=?",
