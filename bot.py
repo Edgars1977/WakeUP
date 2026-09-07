@@ -13,11 +13,18 @@ import os
 import re
 import sqlite3
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import (
+    Update,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    BotCommand,
+)
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -98,6 +105,7 @@ TEXTS = {
         "greeting_named": "Sveiks, {name}! 👋",
         "greeting_plain": "Sveiks! 👋",
         "language_hint": "Ja vēlies citu valodu, spied 🌐 Valoda.",
+        "reset_done": "Dati dzēsti. Nosūti /start, lai sāktu no jauna kā pilnīgi jauns lietotājs.",
         "btn_start_now": "▶️ Sākt tagad",
         "btn_today": "📓 Šodien",
         "btn_history": "📅 Vēsture",
@@ -121,9 +129,10 @@ TEXTS = {
         "no_entries_for_date": "Nav ierakstu par {date}.",
         "entry_header": "📓 Ieraksts — {date}\n",
         "intro": (
-            "Katru dienu plkst. {time} uzdošu tev 5 refleksijas jautājumus — "
-            "par pateicību, uzvarām, izaicinājumiem un nodomiem. Atbildi ar tekstu "
-            "vai balss ziņu, un saglabāšu to kā tavu ikdienas dienasgrāmatu."
+            "Reizi dienā, plkst. {time}, es tev uzdošu 5 refleksijas jautājumus — "
+            "par pateicību, uzvarām, izaicinājumiem un nodomiem. Kad būsi atbildējis "
+            "uz visiem, tie apkoposies dienas ierakstā. Šos apkopojumus vari jebkurā "
+            "laikā palasīt ar 📓 Šodien vai 📅 Vēsture."
         ),
         "help": (
             "Lieto pogas apakšā:\n"
@@ -138,6 +147,7 @@ TEXTS = {
         "greeting_named": "Hi, {name}! 👋",
         "greeting_plain": "Hi! 👋",
         "language_hint": "If you'd like a different language, tap 🌐 Language.",
+        "reset_done": "Data cleared. Send /start to begin again as a brand-new user.",
         "btn_start_now": "▶️ Start now",
         "btn_today": "📓 Today",
         "btn_history": "📅 History",
@@ -161,9 +171,10 @@ TEXTS = {
         "no_entries_for_date": "No entries for {date}.",
         "entry_header": "📓 Entry — {date}\n",
         "intro": (
-            "Every day at {time} I'll ask you 5 reflection questions — "
-            "about gratitude, wins, challenges, and intentions. Reply with text "
-            "or a voice message, and I'll save it as your daily journal."
+            "Once a day, at {time}, I'll ask you 5 reflection questions — "
+            "about gratitude, wins, challenges, and intentions. Once you've "
+            "answered them all, they're compiled into a daily entry. You can "
+            "read these summaries anytime with 📓 Today or 📅 History."
         ),
         "help": (
             "Use the buttons below:\n"
@@ -178,6 +189,7 @@ TEXTS = {
         "greeting_named": "Привет, {name}! 👋",
         "greeting_plain": "Привет! 👋",
         "language_hint": "Если хочешь другой язык, нажми 🌐 Язык.",
+        "reset_done": "Данные удалены. Отправь /start, чтобы начать заново как новый пользователь.",
         "btn_start_now": "▶️ Начать сейчас",
         "btn_today": "📓 Сегодня",
         "btn_history": "📅 История",
@@ -201,10 +213,10 @@ TEXTS = {
         "no_entries_for_date": "Нет записей за {date}.",
         "entry_header": "📓 Запись — {date}\n",
         "intro": (
-            "Каждый день в {time} я буду задавать тебе 5 вопросов для "
+            "Раз в день, в {time}, я буду задавать тебе 5 вопросов для "
             "рефлексии — о благодарности, победах, проблемах и намерениях. "
-            "Отвечай текстом или голосовым сообщением, и я сохраню всё как твой "
-            "ежедневный дневник."
+            "Когда ответишь на все, они соберутся в запись за день. Эти сводки "
+            "можно читать в любое время с помощью 📓 Сегодня или 📅 История."
         ),
         "help": (
             "Используй кнопки внизу:\n"
@@ -361,9 +373,10 @@ async def send_question(chat_id, idx, lang, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=chat_id, text=text)
 
 
-async def start_daily_flow(chat_id, context: ContextTypes.DEFAULT_TYPE):
+async def start_daily_flow(chat_id, context: ContextTypes.DEFAULT_TYPE, date=None):
+    if date is None:
+        date = today_str()
     conn = db()
-    date = today_str()
     existing = conn.execute(
         "SELECT 1 FROM sessions WHERE chat_id=? AND date=?", (chat_id, date)
     ).fetchone()
@@ -534,6 +547,42 @@ async def cmd_valoda(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await prompt_language_change(update.effective_chat.id, context)
 
 
+async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Testēšanai — izdzēš lietotāja paša datus (valoda, laiks, ieraksti),
+    lai varētu no jauna izmēģināt /start plūsmu kā pilnīgi jaunam lietotājam."""
+    chat_id = update.effective_chat.id
+    lang = get_user_language(chat_id)
+    conn = db()
+    conn.execute("DELETE FROM answers WHERE chat_id=?", (chat_id,))
+    conn.execute("DELETE FROM sessions WHERE chat_id=?", (chat_id,))
+    conn.execute("DELETE FROM users WHERE chat_id=?", (chat_id,))
+    conn.commit()
+    conn.close()
+    context.user_data.clear()
+    await update.message.reply_text(t(lang, "reset_done"), reply_markup=ReplyKeyboardRemove())
+
+
+async def cmd_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Testēšanai — nekavējoties pārceļ uz nākamo simulēto dienu un sāk tās
+    jautājumus, negaidot reālu diennakts maiņu vai plānoto laiku."""
+    chat_id = update.effective_chat.id
+    conn = db()
+    row = conn.execute(
+        "SELECT date FROM sessions WHERE chat_id=? ORDER BY date DESC LIMIT 1",
+        (chat_id,),
+    ).fetchone()
+    conn.close()
+    if row:
+        try:
+            last_date = datetime.strptime(row[0], "%Y-%m-%d").date()
+        except ValueError:
+            last_date = datetime.now(TIMEZONE).date()
+    else:
+        last_date = datetime.now(TIMEZONE).date()
+    next_date = (last_date + timedelta(days=1)).strftime("%Y-%m-%d")
+    await start_daily_flow(chat_id, context, date=next_date)
+
+
 async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     chat_id = query.message.chat_id
@@ -659,28 +708,28 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(t(lang, "invalid_time_format"))
         return
 
-    date = today_str()
     conn = db()
     row = conn.execute(
-        "SELECT current_index FROM sessions WHERE chat_id=? AND date=? AND done=0",
-        (chat_id, date),
+        "SELECT date, current_index FROM sessions WHERE chat_id=? AND done=0 "
+        "ORDER BY date DESC LIMIT 1",
+        (chat_id,),
     ).fetchone()
     conn.close()
     if not row:
         await update.message.reply_text(t(lang, "no_active_question"))
         return
-    idx = row[0]
+    date, idx = row
     await _save_answer_and_advance(chat_id, date, idx, lang, text, False, context)
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     lang = get_user_language(chat_id)
-    date = today_str()
     conn = db()
     row = conn.execute(
-        "SELECT current_index FROM sessions WHERE chat_id=? AND date=? AND done=0",
-        (chat_id, date),
+        "SELECT date, current_index FROM sessions WHERE chat_id=? AND done=0 "
+        "ORDER BY date DESC LIMIT 1",
+        (chat_id,),
     ).fetchone()
     conn.close()
     if not row:
@@ -689,7 +738,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not openai_client:
         await update.message.reply_text(t(lang, "voice_not_configured"))
         return
-    idx = row[0]
+    date, idx = row
     tg_file = await context.bot.get_file(update.message.voice.file_id)
     os.makedirs("tmp", exist_ok=True)
     ogg_path = f"tmp/{chat_id}_{idx}.oga"
@@ -707,9 +756,31 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------- Palaišana ----------
 
+# Komandas, kas redzamas Telegram "/" ieteikumu sarakstā (pēc lietotāja valodas).
+# /reset un /next apzināti NAV šeit iekļautas — tās joprojām strādā, ja tās
+# uzraksta ar roku, bet nav publiski redzamas.
+PUBLIC_COMMANDS = [
+    ("start", {"lv": "Sākt / restartēt botu", "en": "Start / restart the bot", "ru": "Запустить / перезапустить бота"}),
+    ("tagad", {"lv": "Sākt šodienas jautājumus", "en": "Start today's questions", "ru": "Начать сегодняшние вопросы"}),
+    ("sodien", {"lv": "Šodienas ieraksts", "en": "Today's entry", "ru": "Запись за сегодня"}),
+    ("vesture", {"lv": "Pēdējo dienu ieraksti", "en": "Recent entries", "ru": "Последние записи"}),
+    ("laiks", {"lv": "Mainīt jautājumu laiku", "en": "Change question time", "ru": "Изменить время вопросов"}),
+    ("valoda", {"lv": "Mainīt valodu", "en": "Change language", "ru": "Сменить язык"}),
+    ("palidziba", {"lv": "Palīdzība", "en": "Help", "ru": "Помощь"}),
+]
+
+
+async def setup_commands(application):
+    for lang_code in ("lv", "en", "ru"):
+        commands = [BotCommand(cmd, desc[lang_code]) for cmd, desc in PUBLIC_COMMANDS]
+        await application.bot.set_my_commands(commands, language_code=lang_code)
+    default_commands = [BotCommand(cmd, desc["en"]) for cmd, desc in PUBLIC_COMMANDS]
+    await application.bot.set_my_commands(default_commands)
+
+
 def main():
     init_db()
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(setup_commands).build()
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("palidziba", cmd_help))
@@ -718,6 +789,8 @@ def main():
     app.add_handler(CommandHandler("sodien", cmd_sodien))
     app.add_handler(CommandHandler("vesture", cmd_vesture))
     app.add_handler(CommandHandler("valoda", cmd_valoda))
+    app.add_handler(CommandHandler("reset", cmd_reset))
+    app.add_handler(CommandHandler("next", cmd_next))
     app.add_handler(CallbackQueryHandler(language_callback, pattern=r"^lang:"))
     app.add_handler(CallbackQueryHandler(settime_callback, pattern=r"^settime:"))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
