@@ -547,6 +547,26 @@ async def cmd_valoda(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await prompt_language_change(update.effective_chat.id, context)
 
 
+async def cmd_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Testēšanai — parāda, ko Telegram reāli atsūta, ko bots no tā noteica,
+    un kas ir saglabāts datubāzē, lai varētu pārbaudīt valodas noteikšanu."""
+    chat_id = update.effective_chat.id
+    user = update.effective_user
+    tg_code = user.language_code if user else None
+    detected = detect_language(tg_code)
+    stored = get_user_language(chat_id)
+    morning_time = get_user_morning_time(chat_id)
+    text = (
+        "🔧 Debug info\n\n"
+        f"Telegram language_code: {tg_code!r}\n"
+        f"Auto-noteiktā valoda (šobrīd): {detected}\n"
+        f"Saglabātā valoda (datubāzē): {stored}\n"
+        f"Saglabātais laiks: {morning_time}\n"
+        f"chat_id: {chat_id}"
+    )
+    await update.message.reply_text(text)
+
+
 async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Testēšanai — izdzēš lietotāja paša datus (valoda, laiks, ieraksti),
     lai varētu no jauna izmēģināt /start plūsmu kā pilnīgi jaunam lietotājam."""
@@ -791,6 +811,7 @@ def main():
     app.add_handler(CommandHandler("valoda", cmd_valoda))
     app.add_handler(CommandHandler("reset", cmd_reset))
     app.add_handler(CommandHandler("next", cmd_next))
+    app.add_handler(CommandHandler("debug", cmd_debug))
     app.add_handler(CallbackQueryHandler(language_callback, pattern=r"^lang:"))
     app.add_handler(CallbackQueryHandler(settime_callback, pattern=r"^settime:"))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
