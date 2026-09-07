@@ -109,6 +109,23 @@ TOPIC_LABELS = {
     "ru": ["🙏 Благодарность", "🏆 Победа", "⚠️ Проблема", "🎯 Намерение", "🌌 Вопрос Вселенной"],
 }
 
+# Lokalizēti nedēļas dienu un mēnešu nosaukumi (indekss 0 = pirmdiena / janvāris),
+# lieto datuma formatēšanai bez gada, piem. "Otrdiena, 8. septembris".
+WEEKDAYS = {
+    "lv": ["Pirmdiena", "Otrdiena", "Trešdiena", "Ceturtdiena", "Piektdiena", "Sestdiena", "Svētdiena"],
+    "en": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+    "ru": ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"],
+}
+
+MONTHS = {
+    "lv": ["janvāris", "februāris", "marts", "aprīlis", "maijs", "jūnijs", "jūlijs",
+           "augusts", "septembris", "oktobris", "novembris", "decembris"],
+    "en": ["January", "February", "March", "April", "May", "June", "July",
+           "August", "September", "October", "November", "December"],
+    "ru": ["января", "февраля", "марта", "апреля", "мая", "июня", "июля",
+           "августа", "сентября", "октября", "ноября", "декабря"],
+}
+
 TEXTS = {
     "lv": {
         "greeting_named": "Sveiks, {name}! 👋",
@@ -440,7 +457,13 @@ def relative_date_label(date_str, lang):
         return t(lang, "today_label")
     if d == today - timedelta(days=1):
         return t(lang, "yesterday_label")
-    return date_str
+    weekday = WEEKDAYS.get(lang, WEEKDAYS[DEFAULT_LANGUAGE])[d.weekday()]
+    month = MONTHS.get(lang, MONTHS[DEFAULT_LANGUAGE])[d.month - 1]
+    if lang == "en":
+        return f"{weekday}, {month} {d.day}"
+    if lang == "ru":
+        return f"{weekday}, {d.day} {month}"
+    return f"{weekday}, {d.day}. {month}"
 
 
 def format_entry(chat_id, date, lang) -> str:
