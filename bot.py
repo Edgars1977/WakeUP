@@ -109,6 +109,9 @@ TOPIC_LABELS = {
     "ru": ["🙏 Благодарность", "🏆 Победа", "⚠️ Проблема", "🎯 Намерение", "🌌 Вопрос Вселенной"],
 }
 
+# Pilni valodu nosaukumi angliski — lieto AI uzmundrinājuma prompta instrukcijā
+LANGUAGE_NAMES_FOR_PROMPT = {"lv": "Latvian", "en": "English", "ru": "Russian"}
+
 # Lokalizēti nedēļas dienu un mēnešu nosaukumi (indekss 0 = pirmdiena / janvāris),
 # lieto datuma formatēšanai bez gada, piem. "Otrdiena, 8. septembris".
 WEEKDAYS = {
@@ -447,6 +450,75 @@ async def transcribe_voice(file_path_ogg: str, lang: str) -> str:
     return result.text.strip()
 
 
+HISTORY_DAYS_FOR_ENCOURAGEMENT = 7
+
+
+def get_recent_answers_by_date(chat_id, days=HISTORY_DAYS_FOR_ENCOURAGEMENT):
+    """Atgriež pēdējo N dienu atbildes kā {date: {question_index: answer_text}},
+    sakārtotas hronoloģiski (vecākā -> jaunākā)."""
+    conn = db()
+    dates = conn.execute(
+        "SELECT DISTINCT date FROM answers WHERE chat_id=? ORDER BY date DESC LIMIT ?",
+        (chat_id, days),
+    ).fetchall()
+    result = {}
+    for (d,) in dates:
+        rows = conn.execute(
+            "SELECT question_index, answer_text FROM answers "
+            "WHERE chat_id=? AND date=? ORDER BY question_index",
+            (chat_id, d),
+        ).fetchall()
+        result[d] = {idx: a for idx, a in rows}
+    conn.close()
+    return dict(sorted(result.items()))  # hronoloģiski: vecākā -> jaunākā (šodiena pēdējā)
+
+
+async def generate_encouragement(chat_id, lang: str) -> str | None:
+    """Ģenerē īsu, personalizētu apsveikumu, analizējot pēdējo N dienu atbildes
+    (ne tikai šodienu) — meklē modeļus/progresu, bet uzsver šodienas uzvaru un
+    nodomu. Atgriež None, ja OpenAI izsaukums neizdodas (piem., nav kredītu) —
+    tad vienkārši izlaižam šo ziņu, negraujot pārējo plūsmu."""
+    if not openai_client:
+        return None
+    topics = TOPIC_LABELS.get(lang, TOPIC_LABELS[DEFAULT_LANGUAGE])
+    language_name = LANGUAGE_NAMES_FOR_PROMPT.get(lang, "English")
+    recent = get_recent_answers_by_date(chat_id)
+    if not recent:
+        return None
+    blocks = []
+    dates_sorted = list(recent.keys())
+    for d in dates_sorted:
+        label = "TODAY" if d == dates_sorted[-1] else d
+        lines = [f"{topics[idx]}: {a}" for idx, a in sorted(recent[d].items())]
+        blocks.append(f"[{label}]\n" + "\n".join(lines))
+    context_lines = "\n\n".join(blocks)
+    system_prompt = (
+        "You are a warm, genuine companion helping someone reflect on their day. "
+        f"Below are their daily reflection answers from up to the last {HISTORY_DAYS_FOR_ENCOURAGEMENT} "
+        "days, oldest first, with today's entry marked [TODAY]. Write a short message "
+        "(3-5 sentences): (1) congratulate them specifically on TODAY's win/success, "
+        "referencing their actual words, (2) if you notice a genuine pattern, recurring "
+        "theme, or follow-through on something from earlier days, mention it briefly — "
+        "only if it's real, never invent one, and (3) warmly encourage them about TODAY's "
+        "stated intention/commitment. Be specific and genuine, not generic or saccharine. "
+        f"No preamble, no greeting, just the message itself. Respond ONLY in {language_name}."
+    )
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": context_lines},
+            ],
+            max_tokens=250,
+            temperature=0.8,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception:
+        logger.exception("Neizdevās ģenerēt uzmundrinājumu")
+        return None
+
+
 def relative_date_label(date_str, lang):
     try:
         d = datetime.strptime(date_str, "%Y-%m-%d").date()
@@ -729,6 +801,9 @@ async def _save_answer_and_advance(chat_id, date, idx, lang, answer_text, is_voi
         await context.bot.send_message(
             chat_id=chat_id, text=format_entry(chat_id, date, lang), parse_mode="HTML"
         )
+        encouragement = await generate_encouragement(chat_id, lang)
+        if encouragement:
+            await context.bot.send_message(chat_id=chat_id, text=f"✨ {encouragement}")
     else:
         conn.execute(
             "UPDATE sessions SET current_index=? WHERE chat_id=? AND date=?",
