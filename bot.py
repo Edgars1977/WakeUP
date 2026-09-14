@@ -887,13 +887,6 @@ async def cmd_tagad(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=chat_id, text=format_entry(chat_id, date, lang), parse_mode="HTML"
         )
-        advice = get_random_advice(lang)
-        if advice:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"{tg_emoji('💡')} {html_escape(advice)}",
-                parse_mode="HTML",
-            )
         return
     conn.execute(
         "DELETE FROM sessions WHERE chat_id=? AND date=? AND done=0",
