@@ -12,6 +12,7 @@ savu saskarnes valodu neatkarīgi no citiem.
 import os
 import re
 import json
+import random
 import sqlite3
 import logging
 from datetime import datetime, timedelta
@@ -105,10 +106,31 @@ QUESTIONS = {
 # Īsi tematiskie apzīmējumi katram no 5 jautājumiem — lieto vēstures/šodienas
 # ieraksta kompaktajā attēlošanā, nevis pilnu jautājuma tekstu katru reizi.
 TOPIC_LABELS = {
-    "lv": ["🙏 Pateicība", "🏆 Uzvara", "⚠️ Problēma", "🎯 Nodoms", "🌌 Jautājums Visumam"],
-    "en": ["🙏 Gratitude", "🏆 Win", "⚠️ Challenge", "🎯 Intention", "🌌 Question to the Universe"],
-    "ru": ["🙏 Благодарность", "🏆 Победа", "⚠️ Проблема", "🎯 Намерение", "🌌 Вопрос Вселенной"],
+    "lv": [("🙏", "Pateicība"), ("🏆", "Uzvara"), ("⚠️", "Problēma"), ("🎯", "Nodoms"), ("🌌", "Jautājums Visumam")],
+    "en": [("🙏", "Gratitude"), ("🏆", "Win"), ("⚠️", "Challenge"), ("🎯", "Intention"), ("🌌", "Question to the Universe")],
+    "ru": [("🙏", "Благодарность"), ("🏆", "Победа"), ("⚠️", "Проблема"), ("🎯", "Намерение"), ("🌌", "Вопрос Вселенной")],
 }
+
+# Animēto (Premium) emocijzīmju ID — lieto HTML <tg-emoji> tagā. Ja kāda emocijzīme
+# šeit nav uzskaitīta, tg_emoji() vienkārši atgriež parasto (statisko) versiju.
+CUSTOM_EMOJI_IDS = {
+    "📓": "5197269100878907942",
+    "🙏": "5382319231410904354",
+    "🏆": "5188344996356448758",
+    "⚠️": "5447644880824181073",
+    "🎯": "5310278924616356636",
+    "🌌": "5217818964612108191",
+    "✨": "5451636889717062286",
+}
+
+
+def tg_emoji(char):
+    """Ietin emocijzīmi <tg-emoji> tagā, ja tai zināms ID (animēta versija HTML
+    ziņās) — citādi atgriež to pašu parasto emocijzīmi bez izmaiņām."""
+    emoji_id = CUSTOM_EMOJI_IDS.get(char)
+    if not emoji_id:
+        return char
+    return f'<tg-emoji emoji-id="{emoji_id}">{char}</tg-emoji>'
 
 # Pilni valodu nosaukumi angliski — lieto AI uzmundrinājuma prompta instrukcijā
 LANGUAGE_NAMES_FOR_PROMPT = {"lv": "Latvian", "en": "English", "ru": "Russian"}
@@ -169,6 +191,32 @@ ADVICE_SEED = {
     ],
 }
 
+# Nejaušas ziņas, kad padoms pieprasīts pirms 4h intervāla beigām — bez
+# precīza pulksteņa laika, dažādas katru reizi.
+ADVICE_COOLDOWN_MESSAGES = {
+    "lv": [
+        "Nesen jau prasīji padomu. Rīkojies — atgriezies vēlāk.",
+        "Padoms jau tev rokā. Izmanto to, pirms prasi nākamo.",
+        "Pacietība. Labs padoms strādā tikai tad, ja tam dod laiku.",
+        "Vēl ne. Vispirms izmēģini to, ko jau dabūji.",
+        "Vēl par agru jaunam padomam. Šis vēl strādā.",
+    ],
+    "en": [
+        "You already asked recently. Go act on it — come back later.",
+        "You've already got one. Use it before asking for another.",
+        "Patience. Advice only works if you give it time.",
+        "Not yet. Try the one you already have first.",
+        "Too soon for a new one. This one's still working.",
+    ],
+    "ru": [
+        "Ты уже недавно спрашивал. Иди действуй — вернись позже.",
+        "У тебя уже есть совет. Используй его, прежде чем просить следующий.",
+        "Терпение. Совет работает, только если дать ему время.",
+        "Ещё нет. Сначала попробуй то, что уже получил.",
+        "Ещё рано для нового. Этот пока работает.",
+    ],
+}
+
 # Lokalizēti nedēļas dienu un mēnešu nosaukumi (indekss 0 = pirmdiena / janvāris),
 # lieto datuma formatēšanai bez gada, piem. "Otrdiena, 8. septembris".
 WEEKDAYS = {
@@ -199,7 +247,6 @@ TEXTS = {
         "btn_help": "❓ Palīdzība",
         "btn_language": "🌐 Valoda",
         "btn_advice": "💡 Padoms",
-        "advice_cooldown": "Nākamo padomu varēsi saņemt pēc {time}.",
         "morning_greeting": "Ir laiks refleksijai! Atbildi ar tekstu vai balss ziņu.",
         "no_active_question": "Šobrīd nav aktīva jautājuma. Nospied \"▶️ Sākt tagad\", lai sāktu šodienas refleksiju.",
         "choose_time": "Izvēlies laiku, kad katru dienu saņemt jautājumus:",
@@ -244,7 +291,6 @@ TEXTS = {
         "btn_help": "❓ Help",
         "btn_language": "🌐 Language",
         "btn_advice": "💡 Advice",
-        "advice_cooldown": "You can get your next piece of advice at {time}.",
         "morning_greeting": "Time for reflection! Reply with text or a voice message.",
         "no_active_question": "There's no active question right now. Tap \"▶️ Start now\" to begin today's reflection.",
         "choose_time": "Choose the time you'd like your daily questions:",
@@ -289,7 +335,6 @@ TEXTS = {
         "btn_help": "❓ Помощь",
         "btn_language": "🌐 Язык",
         "btn_advice": "💡 Совет",
-        "advice_cooldown": "Следующий совет будет доступен в {time}.",
         "morning_greeting": "Время для рефлексии! Ответь текстом или голосовым сообщением.",
         "no_active_question": "Сейчас нет активного вопроса. Нажми «▶️ Начать сейчас», чтобы начать сегодняшнюю рефлексию.",
         "choose_time": "Выбери время, когда каждый день получать вопросы:",
@@ -572,7 +617,7 @@ async def generate_encouragement(chat_id, lang: str) -> str | None:
     dates_sorted = list(recent.keys())
     for d in dates_sorted:
         label = "TODAY" if d == dates_sorted[-1] else d
-        lines = [f"{topics[idx]}: {a}" for idx, a in sorted(recent[d].items())]
+        lines = [f"{topics[idx][1]}: {a}" for idx, a in sorted(recent[d].items())]
         blocks.append(f"[{label}]\n" + "\n".join(lines))
     context_lines = "\n\n".join(blocks)
     system_prompt = (
@@ -633,10 +678,13 @@ def format_entry(chat_id, date, lang) -> str:
     if not rows:
         return t(lang, "no_entries_for_date", date=html_escape(label))
     topic_labels = TOPIC_LABELS.get(lang, TOPIC_LABELS[DEFAULT_LANGUAGE])
-    lines = [f"<b>📓 {html_escape(label)}</b>"]
+    lines = [f"<b>{tg_emoji('📓')} {html_escape(label)}</b>"]
     for idx, a in rows:
-        topic = topic_labels[idx] if idx < len(topic_labels) else f"Q{idx + 1}"
-        lines.append(f"<b>{html_escape(topic)}:</b> {html_escape(a)}")
+        if idx < len(topic_labels):
+            emoji, text = topic_labels[idx]
+        else:
+            emoji, text = ("❓", f"Q{idx + 1}")
+        lines.append(f"<b>{tg_emoji(emoji)} {html_escape(text)}:</b> {html_escape(a)}")
     return "\n".join(lines)
 
 
@@ -718,7 +766,7 @@ async def generate_and_store_new_advice(chat_id):
     for d, answers in recent.items():
         for idx in (0, 1, 3):  # pateicība, uzvara, nodoms — iedvesmas avots
             if idx in answers:
-                lines.append(f"{TOPIC_LABELS['en'][idx]}: {answers[idx]}")
+                lines.append(f"{TOPIC_LABELS['en'][idx][1]}: {answers[idx]}")
     if not lines:
         return
     context_text = "\n".join(lines)
@@ -976,7 +1024,11 @@ async def _save_answer_and_advance(chat_id, date, idx, lang, answer_text, is_voi
         )
         encouragement = await generate_encouragement(chat_id, lang)
         if encouragement:
-            await context.bot.send_message(chat_id=chat_id, text=f"✨ {encouragement}")
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"{tg_emoji('✨')} {html_escape(encouragement)}",
+                parse_mode="HTML",
+            )
     else:
         conn.execute(
             "UPDATE sessions SET current_index=? WHERE chat_id=? AND date=?",
@@ -1017,10 +1069,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         last = get_last_advice_at(chat_id)
         now = datetime.now(TIMEZONE)
         if last and (now - last) < timedelta(hours=ADVICE_COOLDOWN_HOURS):
-            next_time = last + timedelta(hours=ADVICE_COOLDOWN_HOURS)
-            await update.message.reply_text(
-                t(lang, "advice_cooldown", time=next_time.strftime("%H:%M"))
+            cooldown_messages = ADVICE_COOLDOWN_MESSAGES.get(
+                lang, ADVICE_COOLDOWN_MESSAGES[DEFAULT_LANGUAGE]
             )
+            await update.message.reply_text(random.choice(cooldown_messages))
             return
         set_last_advice_at(chat_id, now)
         advice = get_random_advice(lang)
