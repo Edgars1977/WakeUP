@@ -481,6 +481,11 @@ def init_db():
         conn.execute("ALTER TABLE users ADD COLUMN last_advice_at TEXT")
     except sqlite3.OperationalError:
         pass
+    # migrācija esošām datubāzēm, kas izveidotas pirms padoma skaitītāja atbalsta
+    try:
+        conn.execute("ALTER TABLE users ADD COLUMN advice_count INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     # sākotnējais frāžu pildījums — tikai vienreiz, ja tabula vēl tukša
     count = conn.execute("SELECT COUNT(*) FROM advice").fetchone()[0]
     if count == 0:
@@ -750,7 +755,10 @@ def get_last_advice_at(chat_id):
 
 def set_last_advice_at(chat_id, dt):
     conn = db()
-    conn.execute("UPDATE users SET last_advice_at=? WHERE chat_id=?", (dt.isoformat(), chat_id))
+    conn.execute(
+        "UPDATE users SET last_advice_at=?, advice_count=advice_count+1 WHERE chat_id=?",
+        (dt.isoformat(), chat_id),
+    )
     conn.commit()
     conn.close()
 
