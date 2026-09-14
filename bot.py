@@ -121,6 +121,7 @@ CUSTOM_EMOJI_IDS = {
     "🎯": "5310278924616356636",
     "🌌": "5217818964612108191",
     "✨": "5451636889717062286",
+    "💡": "5422439311196834318",
 }
 
 
@@ -260,6 +261,7 @@ TEXTS = {
         "transcription_error": "Neizdevās transkribēt: {error}",
         "voice_not_configured": "Balss transkripcija nav konfigurēta.",
         "thanks_saved": "Paldies! Šodienas ieraksts saglabāts. 🌅",
+        "already_done_today": "Šodienas refleksija jau pabeigta! Lūk, ko šodien pierakstīji:",
         "no_entries": "Vēl nav neviena ieraksta.",
         "no_entries_for_date": "Nav ierakstu par {date}.",
         "today_label": "Šodien",
@@ -304,6 +306,7 @@ TEXTS = {
         "transcription_error": "Transcription failed: {error}",
         "voice_not_configured": "Voice transcription isn't configured.",
         "thanks_saved": "Thanks! Today's entry is saved. 🌅",
+        "already_done_today": "You've already completed today's reflection! Here's what you wrote today:",
         "no_entries": "No entries yet.",
         "no_entries_for_date": "No entries for {date}.",
         "today_label": "Today",
@@ -348,6 +351,7 @@ TEXTS = {
         "transcription_error": "Не удалось расшифровать: {error}",
         "voice_not_configured": "Расшифровка голоса не настроена.",
         "thanks_saved": "Спасибо! Сегодняшняя запись сохранена. 🌅",
+        "already_done_today": "Сегодняшняя рефлексия уже завершена! Вот что ты записал сегодня:",
         "no_entries": "Пока нет записей.",
         "no_entries_for_date": "Нет записей за {date}.",
         "today_label": "Сегодня",
@@ -871,9 +875,29 @@ async def cmd_tagad(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "INSERT OR IGNORE INTO users (chat_id, morning_time, language, active) VALUES (?, ?, ?, 1)",
         (chat_id, DEFAULT_MORNING_TIME, detected_lang),
     )
+    conn.commit()
+    date = today_str()
+    row = conn.execute(
+        "SELECT done FROM sessions WHERE chat_id=? AND date=?", (chat_id, date)
+    ).fetchone()
+    if row and row[0] == 1:
+        conn.close()
+        lang = get_user_language(chat_id)
+        await update.message.reply_text(t(lang, "already_done_today"))
+        await context.bot.send_message(
+            chat_id=chat_id, text=format_entry(chat_id, date, lang), parse_mode="HTML"
+        )
+        advice = get_random_advice(lang)
+        if advice:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"{tg_emoji('💡')} {html_escape(advice)}",
+                parse_mode="HTML",
+            )
+        return
     conn.execute(
         "DELETE FROM sessions WHERE chat_id=? AND date=? AND done=0",
-        (chat_id, today_str()),
+        (chat_id, date),
     )
     conn.commit()
     conn.close()
@@ -1077,7 +1101,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_last_advice_at(chat_id, now)
         advice = get_random_advice(lang)
         if advice:
-            await update.message.reply_text(f"💡 {advice}")
+            await update.message.reply_text(
+                f"{tg_emoji('💡')} {html_escape(advice)}", parse_mode="HTML"
+            )
         await generate_and_store_new_advice(chat_id)
         return
 
