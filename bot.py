@@ -250,7 +250,7 @@ TEXTS = {
         "btn_advice": "💡 Padoms",
         "morning_greeting": "Ir laiks refleksijai! Atbildi ar tekstu vai balss ziņu.",
         "no_active_question": "Šobrīd nav aktīva jautājuma. Nospied \"▶️ Sākt tagad\", lai sāktu šodienas refleksiju.",
-        "choose_time": "Izvēlies laiku, kad katru dienu saņemt jautājumus:",
+        "choose_time": "Pašreizējais laiks: {current}\n\nIzvēlies jaunu laiku:",
         "time_set": "Laiks iestatīts uz {time}.",
         "time_usage": "Lieto formātā: /laiks 08:00",
         "custom_time_label": "✏️ Ievadīt pats",
@@ -295,7 +295,7 @@ TEXTS = {
         "btn_advice": "💡 Advice",
         "morning_greeting": "Time for reflection! Reply with text or a voice message.",
         "no_active_question": "There's no active question right now. Tap \"▶️ Start now\" to begin today's reflection.",
-        "choose_time": "Choose the time you'd like your daily questions:",
+        "choose_time": "Current time: {current}\n\nChoose a new time:",
         "time_set": "Time set to {time}.",
         "time_usage": "Use the format: /laiks 08:00",
         "custom_time_label": "✏️ Enter manually",
@@ -340,7 +340,7 @@ TEXTS = {
         "btn_advice": "💡 Совет",
         "morning_greeting": "Время для рефлексии! Ответь текстом или голосовым сообщением.",
         "no_active_question": "Сейчас нет активного вопроса. Нажми «▶️ Начать сейчас», чтобы начать сегодняшнюю рефлексию.",
-        "choose_time": "Выбери время, когда каждый день получать вопросы:",
+        "choose_time": "Текущее время: {current}\n\nВыбери новое время:",
         "time_set": "Время установлено на {time}.",
         "time_usage": "Используй формат: /laiks 08:00",
         "custom_time_label": "✏️ Ввести вручную",
@@ -1081,7 +1081,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_history_entries(chat_id, 7, context)
         return
     if action == "time":
-        await update.message.reply_text(t(lang, "choose_time"), reply_markup=time_menu_keyboard(lang))
+        current_time = get_user_morning_time(chat_id)
+        await update.message.reply_text(
+            t(lang, "choose_time", current=current_time), reply_markup=time_menu_keyboard(lang)
+        )
         return
     if action == "help":
         await cmd_help(update, context)
