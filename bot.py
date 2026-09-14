@@ -11,6 +11,7 @@ savu saskarnes valodu neatkarīgi no citiem.
 
 import os
 import re
+import json
 import sqlite3
 import logging
 from datetime import datetime, timedelta
@@ -112,6 +113,62 @@ TOPIC_LABELS = {
 # Pilni valodu nosaukumi angliski — lieto AI uzmundrinājuma prompta instrukcijā
 LANGUAGE_NAMES_FOR_PROMPT = {"lv": "Latvian", "en": "English", "ru": "Russian"}
 
+# Sākotnējās "padoma" frāzes — izmanto 💡 Padoms pogai. Tiek ielādētas
+# datubāzes "advice" tabulā vienreiz (pirmajā palaišanas reizē).
+ADVICE_SEED = {
+    "lv": [
+        "Nedari šodien to, ko varēsi nožēlot rīt no rīta.",
+        "Mazi soļi katru dienu uzveic lielus lēcienus reizi gadā.",
+        "Tava nākamā versija tevi vēro. Rādi labu piemēru.",
+        "Atpūta nav slinkums — tā ir daļa no plāna.",
+        "Ja kaut kas neizdodas trīs reizes, tas nav zīme apstāties — tā ir zīme mainīt pieeju.",
+        "Nesalīdzini savu 1. nodaļu ar kāda cita 20. nodaļu.",
+        "Disciplīna ir mīlestība pret sevi nākotnē.",
+        "Neviens neatceras, cik ātri tu sāki. Visi atceras, vai tu pabeidzi.",
+        "Skaidrība nāk no darbības, ne no domāšanas.",
+        "Tava komforta zona ir skaista vieta, kur nekas neizaug.",
+        "Vienalga, cik lēni tu ej — tu joprojām apsteidz visus, kas sēž.",
+        "Ideāls plāns, kas nekad nesākas, ir sliktāks par vidēju plānu, kas sākas šodien.",
+        "Neprasi sev, vai tu vari. Prasi sev, vai tu esi gatavs mēģināt.",
+        "Katra diena, kurā tu iemācies kaut ko jaunu par sevi, nav velti pavadīta diena.",
+        "Vājākā versija no tevis grib atlikt. Stiprākā versija jau ir sākusi.",
+    ],
+    "en": [
+        "Don't do today what you'll regret tomorrow morning.",
+        "Small steps daily beat big leaps once a year.",
+        "Your future self is watching. Set a good example.",
+        "Rest isn't laziness — it's part of the plan.",
+        "If something fails three times, that's not a sign to stop — it's a sign to change your approach.",
+        "Don't compare your chapter 1 to someone else's chapter 20.",
+        "Discipline is love for your future self.",
+        "No one remembers how fast you started. Everyone remembers if you finished.",
+        "Clarity comes from action, not from thinking.",
+        "Your comfort zone is a beautiful place where nothing grows.",
+        "No matter how slow you're going, you're still lapping everyone on the couch.",
+        "A perfect plan that never starts is worse than an average plan that starts today.",
+        "Don't ask yourself if you can. Ask yourself if you're willing to try.",
+        "Any day you learn something new about yourself isn't a wasted day.",
+        "The weakest version of you wants to postpone. The strongest version has already started.",
+    ],
+    "ru": [
+        "Не делай сегодня того, о чём пожалеешь завтра утром.",
+        "Маленькие шаги каждый день побеждают большие скачки раз в год.",
+        "Твоя будущая версия наблюдает за тобой. Подай хороший пример.",
+        "Отдых — не лень, а часть плана.",
+        "Если что-то не получается три раза — это не знак остановиться, а знак изменить подход.",
+        "Не сравнивай свою главу 1 с чужой главой 20.",
+        "Дисциплина — это любовь к своему будущему себе.",
+        "Никто не помнит, как быстро ты начал. Все помнят, довёл ли ты до конца.",
+        "Ясность приходит от действия, а не от размышлений.",
+        "Зона комфорта — красивое место, где ничего не растёт.",
+        "Как бы медленно ты ни шёл, ты всё равно обгоняешь тех, кто сидит на диване.",
+        "Идеальный план, который никогда не начинается, хуже среднего плана, который начинается сегодня.",
+        "Не спрашивай себя, можешь ли ты. Спроси, готов ли попробовать.",
+        "Любой день, когда ты узнаёшь о себе что-то новое, не прожит зря.",
+        "Самая слабая версия тебя хочет отложить. Самая сильная — уже начала.",
+    ],
+}
+
 # Lokalizēti nedēļas dienu un mēnešu nosaukumi (indekss 0 = pirmdiena / janvāris),
 # lieto datuma formatēšanai bez gada, piem. "Otrdiena, 8. septembris".
 WEEKDAYS = {
@@ -141,6 +198,8 @@ TEXTS = {
         "btn_time": "⏰ Mainīt laiku",
         "btn_help": "❓ Palīdzība",
         "btn_language": "🌐 Valoda",
+        "btn_advice": "💡 Padoms",
+        "advice_cooldown": "Nākamo padomu varēsi saņemt pēc {time}.",
         "morning_greeting": "Ir laiks refleksijai! Atbildi ar tekstu vai balss ziņu.",
         "no_active_question": "Šobrīd nav aktīva jautājuma. Nospied \"▶️ Sākt tagad\", lai sāktu šodienas refleksiju.",
         "choose_time": "Izvēlies laiku, kad katru dienu saņemt jautājumus:",
@@ -184,6 +243,8 @@ TEXTS = {
         "btn_time": "⏰ Change time",
         "btn_help": "❓ Help",
         "btn_language": "🌐 Language",
+        "btn_advice": "💡 Advice",
+        "advice_cooldown": "You can get your next piece of advice at {time}.",
         "morning_greeting": "Time for reflection! Reply with text or a voice message.",
         "no_active_question": "There's no active question right now. Tap \"▶️ Start now\" to begin today's reflection.",
         "choose_time": "Choose the time you'd like your daily questions:",
@@ -227,6 +288,8 @@ TEXTS = {
         "btn_time": "⏰ Изменить время",
         "btn_help": "❓ Помощь",
         "btn_language": "🌐 Язык",
+        "btn_advice": "💡 Совет",
+        "advice_cooldown": "Следующий совет будет доступен в {time}.",
         "morning_greeting": "Время для рефлексии! Ответь текстом или голосовым сообщением.",
         "no_active_question": "Сейчас нет активного вопроса. Нажми «▶️ Начать сейчас», чтобы начать сегодняшнюю рефлексию.",
         "choose_time": "Выбери время, когда каждый день получать вопросы:",
@@ -275,6 +338,7 @@ def main_menu_keyboard(lang):
             [tx["btn_start_now"], tx["btn_today"]],
             [tx["btn_history"], tx["btn_time"]],
             [tx["btn_help"], tx["btn_language"]],
+            [tx["btn_advice"]],
         ],
         resize_keyboard=True,
     )
@@ -308,6 +372,7 @@ def _build_button_actions():
         mapping[tx["btn_time"]] = "time"
         mapping[tx["btn_help"]] = "help"
         mapping[tx["btn_language"]] = "language"
+        mapping[tx["btn_advice"]] = "advice"
     return mapping
 
 
@@ -350,6 +415,11 @@ def init_db():
             is_voice INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS advice (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lang TEXT NOT NULL,
+            phrase TEXT NOT NULL
+        );
         """
     )
     # migrācija esošām datubāzēm, kas izveidotas pirms valodas atbalsta
@@ -357,6 +427,19 @@ def init_db():
         conn.execute("ALTER TABLE users ADD COLUMN language TEXT NOT NULL DEFAULT 'lv'")
     except sqlite3.OperationalError:
         pass
+    # migrācija esošām datubāzēm, kas izveidotas pirms padoma intervāla atbalsta
+    try:
+        conn.execute("ALTER TABLE users ADD COLUMN last_advice_at TEXT")
+    except sqlite3.OperationalError:
+        pass
+    # sākotnējais frāžu pildījums — tikai vienreiz, ja tabula vēl tukša
+    count = conn.execute("SELECT COUNT(*) FROM advice").fetchone()[0]
+    if count == 0:
+        for lang, phrases in ADVICE_SEED.items():
+            conn.executemany(
+                "INSERT INTO advice (lang, phrase) VALUES (?, ?)",
+                [(lang, p) for p in phrases],
+            )
     conn.commit()
     conn.close()
 
@@ -585,6 +668,96 @@ async def prompt_language_change(chat_id, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(
         chat_id=chat_id, text=CHOOSE_LANGUAGE_TEXT, reply_markup=language_keyboard()
     )
+
+
+def get_random_advice(lang):
+    conn = db()
+    row = conn.execute(
+        "SELECT phrase FROM advice WHERE lang=? ORDER BY RANDOM() LIMIT 1", (lang,)
+    ).fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
+ADVICE_COOLDOWN_HOURS = 4
+
+
+def get_last_advice_at(chat_id):
+    conn = db()
+    row = conn.execute(
+        "SELECT last_advice_at FROM users WHERE chat_id=?", (chat_id,)
+    ).fetchone()
+    conn.close()
+    if row and row[0]:
+        try:
+            return datetime.fromisoformat(row[0])
+        except ValueError:
+            return None
+    return None
+
+
+def set_last_advice_at(chat_id, dt):
+    conn = db()
+    conn.execute("UPDATE users SET last_advice_at=? WHERE chat_id=?", (dt.isoformat(), chat_id))
+    conn.commit()
+    conn.close()
+
+
+async def generate_and_store_new_advice(chat_id):
+    """Analizē lietotāja pēdējo dienu atbilžu modeļus (pateicība/uzvara/nodoms)
+    un ģenerē VIENU jaunu, VISPĀRINĀTU padoma frāzi visās 3 valodās, pievienojot
+    to kopīgajai advice tabulai. Frāze nedrīkst saturēt personiskas detaļas, jo
+    tā nonāk kopīgajā, visiem redzamajā krājumā. Kļūdas gadījumā vienkārši
+    izlaižam — tas nav kritiski galvenajai plūsmai."""
+    if not openai_client:
+        return
+    recent = get_recent_answers_by_date(chat_id)
+    if not recent:
+        return
+    lines = []
+    for d, answers in recent.items():
+        for idx in (0, 1, 3):  # pateicība, uzvara, nodoms — iedvesmas avots
+            if idx in answers:
+                lines.append(f"{TOPIC_LABELS['en'][idx]}: {answers[idx]}")
+    if not lines:
+        return
+    context_text = "\n".join(lines)
+    examples = "\n".join(ADVICE_SEED["en"][:5])
+    system_prompt = (
+        "You write short, punchy, universal wisdom one-liners in the style of "
+        f"these examples:\n{examples}\n\n"
+        "Based on the underlying THEMES in the reflection answers below (not the "
+        "specific details), write ONE new short advice one-liner (under 15 words) "
+        "inspired by that theme — but fully GENERALIZED and universal, with NO "
+        "personal or private details from the answers. It must read like general "
+        "life advice anyone could relate to, never a summary of this person's "
+        "specific situation. Respond ONLY with a JSON object with exactly these "
+        'keys: {"lv": "...", "en": "...", "ru": "..."} — the same piece of wisdom '
+        "written naturally in each language (not literal translations)."
+    )
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": context_text},
+            ],
+            max_tokens=200,
+            temperature=0.9,
+            response_format={"type": "json_object"},
+        )
+        data = json.loads(response.choices[0].message.content)
+        conn = db()
+        for lang_code in ("lv", "en", "ru"):
+            phrase = (data.get(lang_code) or "").strip()
+            if phrase:
+                conn.execute(
+                    "INSERT INTO advice (lang, phrase) VALUES (?, ?)", (lang_code, phrase)
+                )
+        conn.commit()
+        conn.close()
+    except Exception:
+        logger.exception("Neizdevās ģenerēt jaunu padoma frāzi")
 
 
 # ---------- Komandas ----------
@@ -839,6 +1012,21 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if action == "language":
         await prompt_language_change(chat_id, context)
+        return
+    if action == "advice":
+        last = get_last_advice_at(chat_id)
+        now = datetime.now(TIMEZONE)
+        if last and (now - last) < timedelta(hours=ADVICE_COOLDOWN_HOURS):
+            next_time = last + timedelta(hours=ADVICE_COOLDOWN_HOURS)
+            await update.message.reply_text(
+                t(lang, "advice_cooldown", time=next_time.strftime("%H:%M"))
+            )
+            return
+        set_last_advice_at(chat_id, now)
+        advice = get_random_advice(lang)
+        if advice:
+            await update.message.reply_text(f"💡 {advice}")
+        await generate_and_store_new_advice(chat_id)
         return
 
     if context.user_data.get("awaiting_time"):
