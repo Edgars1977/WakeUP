@@ -103,6 +103,61 @@ QUESTIONS = {
     ],
 }
 
+# Īsi "iesildīšanas" teksti katram jautājumam — palīdz cilvēkam apstāties un
+# padomāt dziļāk, pirms atbild. Rādās zem paša jautājuma.
+REFLECTION_PROMPTS = {
+    "lv": [
+        "Apstājies uz brīdi. Kur tu šobrīd atrodies savā dzīvē — ne tikai fiziski, "
+        "bet kopumā? Padomā par kaut ko mazu vai lielu, kas pēdējā laikā tev lika "
+        "justies paveicies.",
+        "Ne katra uzvara ir liela un uzreiz redzama. Salīdzini, kur tu biji vakar "
+        "un kur esi šodien — vai atradi solīti uz priekšu, pat mazu? Tas var būt "
+        "kaut kas, ko izdarīji, no kā atturējies, vai kaut ko beidzot sapratis.",
+        "Kas tev šobrīd stāv ceļā uz to, kurp tu ej? Nedomā par visu uzreiz — "
+        "izvēlies vienu konkrētu lietu, kas patiešām prasa tavu uzmanību tieši "
+        "tagad.",
+        "Kurp tu dodies šodien? Ne vispārīgi, bet konkrēti — kāds viens solis "
+        "tevi virzīs tuvāk tam, kas tev patiešām svarīgs.",
+        "Kas tevi šobrīd nodarbina, uz ko tev nav atbildes? Šis nav jautājums, "
+        "uz kuru jāatbild uzreiz — vienkārši ļauj tam izskanēt.",
+    ],
+    "en": [
+        "Pause for a moment. Where are you right now in your life — not just "
+        "physically, but overall? Think of something small or big that's made "
+        "you feel fortunate lately.",
+        "Not every win is big or obvious right away. Compare where you were "
+        "yesterday to where you are today — did you find a step forward, even a "
+        "small one? It could be something you did, something you resisted, or "
+        "something you finally understood.",
+        "What's standing in your way right now, on the path to where you're "
+        "going? Don't think about everything at once — pick one specific thing "
+        "that genuinely needs your attention right now.",
+        "Where are you headed today? Not in general terms, but specifically — "
+        "what's one step that will move you closer to what actually matters to "
+        "you?",
+        "What's on your mind right now that you don't have an answer to? This "
+        "isn't a question you need to answer immediately — just let it sit for "
+        "a moment.",
+    ],
+    "ru": [
+        "Остановись на мгновение. Где ты сейчас находишься в своей жизни — не "
+        "только физически, но и в целом? Подумай о чём-то маленьком или "
+        "большом, что в последнее время заставило тебя почувствовать "
+        "благодарность.",
+        "Не каждая победа большая и сразу заметная. Сравни, где ты был вчера и "
+        "где ты сейчас — нашёл ли ты шаг вперёд, пусть даже маленький? Это "
+        "может быть то, что ты сделал, от чего удержался, или что-то, что "
+        "наконец понял.",
+        "Что сейчас стоит на твоём пути туда, куда ты идёшь? Не думай обо всём "
+        "сразу — выбери одну конкретную вещь, которая действительно требует "
+        "твоего внимания прямо сейчас.",
+        "Куда ты направляешься сегодня? Не в общем, а конкретно — какой один "
+        "шаг приблизит тебя к тому, что для тебя действительно важно?",
+        "Что сейчас занимает твои мысли, на что у тебя нет ответа? Это не "
+        "вопрос, на который нужно ответить сразу — просто дай ему прозвучать.",
+    ],
+}
+
 # Īsi tematiskie apzīmējumi katram no 5 jautājumiem — lieto vēstures/šodienas
 # ieraksta kompaktajā attēlošanā, nevis pilnu jautājuma tekstu katru reizi.
 TOPIC_LABELS = {
@@ -122,6 +177,7 @@ CUSTOM_EMOJI_IDS = {
     "🌌": "5217818964612108191",
     "✨": "5451636889717062286",
     "💡": "5422439311196834318",
+    "❓": "5382187118216879236",
 }
 
 
@@ -249,6 +305,7 @@ TEXTS = {
         "btn_language": "🌐 Valoda",
         "btn_advice": "💡 Padoms",
         "morning_greeting": "Ir laiks refleksijai! Atbildi ar tekstu vai balss ziņu.",
+        "reflection_label": "Pārdomai",
         "no_active_question": "Šobrīd nav aktīva jautājuma. Nospied \"▶️ Sākt tagad\", lai sāktu šodienas refleksiju.",
         "choose_time": "Pašreizējais laiks: {current}\n\nIzvēlies jaunu laiku:",
         "time_set": "Laiks iestatīts uz {time}.",
@@ -294,6 +351,7 @@ TEXTS = {
         "btn_language": "🌐 Language",
         "btn_advice": "💡 Advice",
         "morning_greeting": "Time for reflection! Reply with text or a voice message.",
+        "reflection_label": "Something to consider",
         "no_active_question": "There's no active question right now. Tap \"▶️ Start now\" to begin today's reflection.",
         "choose_time": "Current time: {current}\n\nChoose a new time:",
         "time_set": "Time set to {time}.",
@@ -339,6 +397,7 @@ TEXTS = {
         "btn_language": "🌐 Язык",
         "btn_advice": "💡 Совет",
         "morning_greeting": "Время для рефлексии! Ответь текстом или голосовым сообщением.",
+        "reflection_label": "Для размышления",
         "no_active_question": "Сейчас нет активного вопроса. Нажми «▶️ Начать сейчас», чтобы начать сегодняшнюю рефлексию.",
         "choose_time": "Текущее время: {current}\n\nВыбери новое время:",
         "time_set": "Время установлено на {time}.",
@@ -537,9 +596,14 @@ def get_user_morning_time(chat_id):
 
 async def send_question(chat_id, idx, lang, context: ContextTypes.DEFAULT_TYPE):
     questions = QUESTIONS.get(lang, QUESTIONS[DEFAULT_LANGUAGE])
+    prompts = REFLECTION_PROMPTS.get(lang, REFLECTION_PROMPTS[DEFAULT_LANGUAGE])
     total = len(questions)
-    text = f"({idx + 1}/{total}) {questions[idx]}"
-    await context.bot.send_message(chat_id=chat_id, text=text)
+    reflection_label = t(lang, "reflection_label")
+    text = (
+        f"({idx + 1}/{total}) {questions[idx]}\n\n"
+        f"{tg_emoji('❓')} {reflection_label}: {prompts[idx]}"
+    )
+    await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
 
 
 async def start_daily_flow(chat_id, context: ContextTypes.DEFAULT_TYPE, date=None):
