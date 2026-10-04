@@ -1,12 +1,14 @@
 """
 Ikdienas refleksijas Telegram bots (daudzvalodu: LV / EN / RU).
 
-Katru dienu paša izvēlētā laikā (var būt rīts, vakars — jebkurš brīdis)
-bots uzdod lietotājam 5 "maģiskos jautājumus",
-lietotājs atbild ar tekstu vai balsi (balss tiek pārvērsta tekstā ar
-OpenAI Whisper API), un visas atbildes tiek saglabātas SQLite datubāzē
-kā ikdienas dienasgrāmatas ieraksts. Katrs lietotājs var izvēlēties
-savu saskarnes valodu neatkarīgi no citiem.
+Katru dienu divas sesijas: rīta jautājumi (pateicība, kas ES esmu, ieviešamais,
+galvenais uzdevums, prioritātes) un vakara jautājumi (rituāli, kas jauns,
+pateicība, palīdzība citiem, iemācītais, atziņas). Katrai sesijai savs
+atgādinājuma laiks, bet "Sākt tagad" pēc pulksteņa izvēlas, kuru sesiju palaist.
+Lietotājs atbild ar tekstu vai balsi (balss tiek pārvērsta tekstā ar OpenAI
+Whisper API), un visas atbildes tiek saglabātas SQLite datubāzē kā ikdienas
+dienasgrāmatas ieraksts. Katrs lietotājs var izvēlēties savu saskarnes valodu
+neatkarīgi no citiem.
 """
 
 import os
@@ -52,6 +54,12 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 TIMEZONE = ZoneInfo(os.environ.get("TIMEZONE", "Europe/Riga"))
 DB_PATH = os.environ.get("DB_PATH", "data/bot.db")
 DEFAULT_MORNING_TIME = os.environ.get("DEFAULT_MORNING_TIME", "08:00")
+DEFAULT_EVENING_TIME = os.environ.get("DEFAULT_EVENING_TIME", "21:00")
+# "Sākt tagad": pirms šīs pulksteņa stundas tiek piedāvāts rīts, no tās — vakars
+SESSION_SPLIT_HOUR = 16
+# Plānotais atgādinājums vēl tiek sūtīts, ja plānotais laiks pagājis ne vairāk par
+# tik minūtēm (lai bota pārstartēšana vai izlaista minūte neizraisītu zaudējumu)
+REMINDER_WINDOW_MIN = 10
 DEFAULT_LANGUAGE = "en"
 SUPPORTED_LANGUAGES = ("lv", "en", "ru")
 
@@ -78,89 +86,210 @@ CHOOSE_LANGUAGE_TEXT = (
     "🇱🇻 Izvēlies valodu:\n🇬🇧 Choose a language:\n🇷🇺 Выберите язык:"
 )
 
-# 5 jautājumi katrā valodā, adaptēti no "Maģiskie jautājumi partnerim" uz solo refleksiju
+# ---------- Jautājumi: rīts un vakars ----------
+# Katram periodam ("morning" / "evening") savi jautājumi katrā valodā.
+# Jautājumi ir pirmajā personā ("ES") — kā saruna ar sevi; paskaidrojumi
+# ("Pārdomai") ir uz "tu".
+
+PERIODS = ("morning", "evening")
+
 QUESTIONS = {
-    "lv": [
-        "Par ko tu šobrīd esi visvairāk pateicīgs?",
-        "Kāda uzvara vai panākums tev bija pēdējās 24 stundās?",
-        "Kādu konkrētu problēmu tu redzi šobrīd?",
-        "Kādi konkrēti nodomi tev ir šodienai?",
-        "Kādu jautājumu tu šobrīd vēlies uzdot Visumam (vai sev)?",
-    ],
-    "en": [
-        "What are you most grateful for right now?",
-        "What win or success have you had in the last 24 hours?",
-        "What specific problem do you see right now?",
-        "What specific intentions do you have for today?",
-        "What question do you want to ask the Universe (or yourself) right now?",
-    ],
-    "ru": [
-        "За что ты сейчас больше всего благодарен?",
-        "Какая победа или успех были у тебя за последние 24 часа?",
-        "Какую конкретную проблему ты видишь прямо сейчас?",
-        "Какие конкретные намерения у тебя на сегодня?",
-        "Какой вопрос ты хочешь задать Вселенной (или себе) прямо сейчас?",
-    ],
+    "morning": {
+        "lv": [
+            "Par ko ES varu būt pateicīgs šorīt?",
+            "Kas ES esmu šodien?",
+            "Ko ES šodien savā dzīvē ieviesīšu vai vēlos ieviest (un kas manu šodienu padarīs izdevušos)?",
+            "Kāds ir mans šīs dienas pats galvenais uzdevums?",
+            "5 prioritātes un vienkārši uzdevumi, kuri man šodienas laikā ir jāpaveic.",
+        ],
+        "en": [
+            "What can I be grateful for this morning?",
+            "Who am I today?",
+            "What will I bring into my life today, or want to bring (and what will make my day a success)?",
+            "What is my single most important task of this day?",
+            "5 priorities and simple tasks I need to get done today.",
+        ],
+        "ru": [
+            "За что Я могу поблагодарить жизнь этим утром?",
+            "Кто Я сегодня?",
+            "Что Я сегодня внесу в свою жизнь или хочу внести (и что сделает мой день удавшимся)?",
+            "Какая моя самая главная задача на сегодня?",
+            "5 приоритетов и простых задач, которые мне нужно выполнить в течение дня.",
+        ],
+    },
+    "evening": {
+        "lv": [
+            "Kādus rituālus un ikdienas darbus ES šodien paveicu?",
+            "Kas jauns šodien noticis manā dzīvē?",
+            "Kam ES šodien varēju būt pateicīgs? Par ko varu pateikties?",
+            "Kam ES palīdzēju, pateicu labus vārdus vai veltīju nedalītu uzmanību?",
+            "Ko ES šodien iemācījos? Ko ES gribētu iemācīties vai attīstīt sevī papildus?",
+            "Ko ES apzinājos vai sapratu, atbildot uz šiem dienas jautājumiem?",
+        ],
+        "en": [
+            "Which rituals and everyday tasks did I get done today?",
+            "What's new that happened in my life today?",
+            "What could I have been grateful for today? Who can I say thank you to?",
+            "Who did I help, say kind words to, or give my undivided attention?",
+            "What did I learn today? What would I like to learn or develop in myself?",
+            "What did I realize or understand while answering these questions of the day?",
+        ],
+        "ru": [
+            "Какие ритуалы и повседневные дела у меня сегодня получились?",
+            "Что нового произошло сегодня в моей жизни?",
+            "Кому и за что Я могу сегодня сказать спасибо?",
+            "Кому сегодня достались моя помощь, добрые слова или нераздельное внимание?",
+            "Чему меня научил этот день? Чему хочу научиться или что развить в себе дополнительно?",
+            "Какой ответ или какое понимание пришло ко мне, пока Я отвечаю на эти вопросы дня?",
+        ],
+    },
 }
 
 # Īsi "iesildīšanas" teksti katram jautājumam — palīdz cilvēkam apstāties un
-# padomāt dziļāk, pirms atbild. Rādās zem paša jautājuma.
+# padomāt dziļāk, pirms atbild. Rādās zem paša jautājuma. Secība sakrīt ar QUESTIONS.
 REFLECTION_PROMPTS = {
-    "lv": [
-        "Apstājies uz brīdi. Kur tu šobrīd atrodies savā dzīvē — ne tikai fiziski, "
-        "bet kopumā? Padomā par kaut ko mazu vai lielu, kas pēdējā laikā tev lika "
-        "justies paveicies.",
-        "Ne katra uzvara ir liela un uzreiz redzama. Salīdzini, kur tu biji vakar "
-        "un kur esi šodien — vai atradi solīti uz priekšu, pat mazu? Tas var būt "
-        "kaut kas, ko izdarīji, no kā atturējies, vai kaut ko beidzot sapratis.",
-        "Kas tev šobrīd stāv ceļā uz to, kurp tu ej? Nedomā par visu uzreiz — "
-        "izvēlies vienu konkrētu lietu, kas patiešām prasa tavu uzmanību tieši "
-        "tagad.",
-        "Kurp tu dodies šodien? Ne vispārīgi, bet konkrēti — kāds viens solis "
-        "tevi virzīs tuvāk tam, kas tev patiešām svarīgs.",
-        "Kas tevi šobrīd nodarbina, uz ko tev nav atbildes? Šis nav jautājums, "
-        "uz kuru jāatbild uzreiz — vienkārši ļauj tam izskanēt.",
-    ],
-    "en": [
-        "Pause for a moment. Where are you right now in your life — not just "
-        "physically, but overall? Think of something small or big that's made "
-        "you feel fortunate lately.",
-        "Not every win is big or obvious right away. Compare where you were "
-        "yesterday to where you are today — did you find a step forward, even a "
-        "small one? It could be something you did, something you resisted, or "
-        "something you finally understood.",
-        "What's standing in your way right now, on the path to where you're "
-        "going? Don't think about everything at once — pick one specific thing "
-        "that genuinely needs your attention right now.",
-        "Where are you headed today? Not in general terms, but specifically — "
-        "what's one step that will move you closer to what actually matters to "
-        "you?",
-        "What's on your mind right now that you don't have an answer to? This "
-        "isn't a question you need to answer immediately — just let it sit for "
-        "a moment.",
-    ],
-    "ru": [
-        "Остановись на мгновение. Где ты сейчас находишься в своей жизни — не "
-        "только физически, но и в целом? Подумай о чём-то маленьком или "
-        "большом, что в последнее время заставило тебя почувствовать "
-        "благодарность.",
-        "Не каждая победа большая и сразу заметная. Сравни, где ты был вчера и "
-        "где ты сейчас — нашёл ли ты шаг вперёд, пусть даже маленький? Это "
-        "может быть то, что ты сделал, от чего удержался, или что-то, что "
-        "наконец понял.",
-        "Что сейчас стоит на твоём пути туда, куда ты идёшь? Не думай обо всём "
-        "сразу — выбери одну конкретную вещь, которая действительно требует "
-        "твоего внимания прямо сейчас.",
-        "Куда ты направляешься сегодня? Не в общем, а конкретно — какой один "
-        "шаг приблизит тебя к тому, что для тебя действительно важно?",
-        "Что сейчас занимает твои мысли, на что у тебя нет ответа? Это не "
-        "вопрос, на который нужно ответить сразу — просто дай ему прозвучать.",
-    ],
+    "morning": {
+        "lv": [
+            "Sāc ar mazām, konkrētām lietām — tējas krūze, silta gulta, kāds ziņojums, "
+            "kas tevi iepriecināja. Konkrētais strādā labāk par vispārīgo: nevis «par "
+            "visu», bet par to, ko tu šorīt tiešām vari ieraudzīt vai sajust.",
+            "Pajautā sev, kur tu šorīt atrodies — kā jūties, kāds gribi būt šodien un "
+            "ko ienes pasaulē. Vari atbildēt ar vienu vārdu, lomu vai sajūtu — "
+            "piemēram, miers, drosme, uzmanība, atbalsts citiem.",
+            "Padomā par vienu jaunu ieradumu, domu vai rīcību, ko šodien vari ienest "
+            "savā dzīvē — pat sīku. Un pajautā: kas mainīsies, ja es to izdarīšu? Kas "
+            "liks šai dienai justies izdevušai?",
+            "No visa, kas gaida, izvēlies vienu lietu, kuru paveicot, diena jau būs "
+            "vērtīga. Ja šodien izdarītu tikai to, vai diena justos izdevusies? Tas "
+            "arī ir tavs galvenais uzdevums.",
+            "Uzraksti vienā ziņā līdz piecām konkrētām, vienkāršām darbībām, kas tev "
+            "šodien jāpaveic — katru savā rindā vai atdalot ar komatu. Labi uzdevumi "
+            "ir tādi, ko vakarā var vienkārši atzīmēt kā izdarītus vai neizdarītus.",
+        ],
+        "en": [
+            "Start small and concrete — a warm cup of tea, a comfortable bed, a message "
+            "that made you smile. Specific things work better than general ones: not "
+            "«everything», but what you can actually see or feel this morning.",
+            "Ask yourself where you are this morning — how you feel, who you want to be "
+            "today, what you bring into the world. You can answer with a single word, "
+            "role or feeling — calm, focus, courage, support for others.",
+            "Think of one new habit, thought or action you can bring into your life "
+            "today — even a tiny one. Then ask: what changes if I do it? What would "
+            "make this day feel successful?",
+            "Out of everything waiting for you, pick the one thing that, once done, "
+            "makes the day worthwhile. If that were the only thing you finished today, "
+            "would the day still feel successful? That's your main task.",
+            "In one message, write up to five concrete, simple actions you need to "
+            "complete today — one per line or separated by commas. Good tasks are ones "
+            "you can simply tick off tonight as done or not done.",
+        ],
+        "ru": [
+            "Начни с маленького и конкретного — чашка чая, тёплая постель, сообщение, "
+            "которое порадовало. Конкретное работает лучше общего: не «за всё», а за "
+            "то, что ты действительно можешь увидеть или почувствовать этим утром.",
+            "Спроси себя, где ты этим утром находишься — как себя чувствуешь, каким "
+            "хочешь быть сегодня, что приносишь в мир. Можно ответить одним словом, "
+            "ролью или ощущением — спокойствие, смелость, внимательность, поддержка "
+            "для других.",
+            "Подумай об одной новой привычке, мысли или действии, которое можно "
+            "привнести в жизнь сегодня — пусть даже крошечном. И спроси себя: что "
+            "изменится, если я это сделаю? Что сделает этот день удавшимся?",
+            "Из всего, что ждёт, выбери одно дело, после которого день уже не будет "
+            "напрасным. Если бы сегодня удалось сделать только это, день всё равно "
+            "казался бы удавшимся? Это и есть главная задача.",
+            "Одним сообщением запиши до пяти конкретных простых действий, которые "
+            "нужно выполнить сегодня — каждое с новой строки или через запятую. "
+            "Хорошая задача — та, которую вечером можно просто отметить как "
+            "сделанную или нет.",
+        ],
+    },
+    "evening": {
+        "lv": [
+            "Atskaties uz dienas ierastajām lietām — rīta un vakara rituāliem, mājas "
+            "darbiem, ēdienreizēm, kustībām, kārtības uzturēšanu. Kas no tā šodien "
+            "izdevās, kas ne, un kā tas gāja — viegli, ar pūlēm vai gandrīz nemanot?",
+            "Padomā par jebko jaunu, kas šodien ienāca tavā dzīvē: pārmaiņu, kādu labu "
+            "notikumu, jaunu pieredzi vai piedzīvojumu, kaut ko, ko uzzināji, vai kaut "
+            "ko jaunu par sevi. Pat mazs atklājums ir ieraksta vērts.",
+            "Skaties uz dienu kā uz stāstu — kas tajā bija tāds, par ko vērts pateikt "
+            "paldies? Tas var būt cilvēks, notikums vai sīkums. Padomā arī, kam "
+            "konkrēti to varētu pateikt skaļi.",
+            "Atceries brīžus, kad tu kādam biji blakus — palīdzēji, pateici labu vārdu "
+            "vai patiešām biji klāt bez steigas un telefona. Tas var būt tuvs cilvēks "
+            "vai nejaušs garāmgājējs. Ja šodien tādu brīdi neatrodi, tā ir atbilde "
+            "rītdienai.",
+            "Pajautā, ko šī diena tev iemācīja — par pasauli, citiem vai sevi. Un "
+            "otrādi: ko tu gribētu iemācīties vai attīstīt sevī papildus — nav "
+            "obligāti kaut kas liels, pietiek ar vienu nelielu virzienu.",
+            "Atskaties uz to, ko tikko pierakstīji. Vai, atbildot uz šiem jautājumiem, "
+            "kaut kas kļuva skaidrāks — atbilde, jauna doma, atziņa, ko iepriekš "
+            "nepamanīji? Ieraksti to, pat ja tā ir tikai viena frāze.",
+        ],
+        "en": [
+            "Look back at the everyday things — morning and evening rituals, chores, "
+            "meals, movement, keeping things in order. What worked today, what didn't, "
+            "and how did it feel — easy, effortful, or almost unnoticed?",
+            "Think of anything new that came into your life today: a change, something "
+            "good that happened, a new experience or adventure, something you learned, "
+            "or something new about yourself. Even a small discovery is worth writing "
+            "down.",
+            "Look at the day like a story — what in it was worth saying thank you for? "
+            "It could be a person, an event or a small thing. Also think of who exactly "
+            "you could say it to out loud.",
+            "Recall the moments when you were there for someone — you helped, said a "
+            "kind word, or truly were present without rushing or your phone. It could "
+            "be someone close or a stranger. If you can't find such a moment today, "
+            "that is also an answer for tomorrow.",
+            "Ask what this day taught you — about the world, others or yourself. And "
+            "the other side: what would you like to learn or develop in yourself — it "
+            "doesn't have to be big, one small direction is enough.",
+            "Look back at what you just wrote. Did anything become clearer while "
+            "answering these questions — an answer, a new thought, an insight you "
+            "hadn't noticed before? Write it down, even if it's just one sentence.",
+        ],
+        "ru": [
+            "Оглянись на повседневные дела — утренние и вечерние ритуалы, домашние "
+            "заботы, еду, движение, порядок вокруг. Что сегодня получилось, что нет, "
+            "и как это далось — легко, с усилием или почти незаметно?",
+            "Подумай о чём-то новом, что вошло сегодня в твою жизнь: перемена, "
+            "что-то хорошее, новый опыт или приключение, новое знание или что-то "
+            "новое о себе. Даже маленькое открытие стоит записи.",
+            "Посмотри на день как на историю — что в нём было достойно слов «спасибо»? "
+            "Это может быть человек, событие или мелочь. Подумай и о том, кому именно "
+            "это можно сказать вслух.",
+            "Вспомни моменты, в которых нашлось место для другого человека: помощь, "
+            "доброе слово, полное внимание без спешки и телефона. Это может быть "
+            "близкий человек или случайный прохожий. Если сегодня такого момента не "
+            "нашлось — это тоже ответ для завтрашнего дня.",
+            "Спроси себя, чему тебя научил этот день — о мире, о других или о себе. И "
+            "с другой стороны: чему хочется научиться или что развить в себе "
+            "дополнительно — не обязательно что-то большое, достаточно одного "
+            "небольшого направления.",
+            "Оглянись на только что написанное. Стало ли что-то яснее, пока шли ответы "
+            "на эти вопросы — ответ, новая мысль, понимание, которого раньше не "
+            "замечалось? Запиши это, даже если получится одна фраза.",
+        ],
+    },
 }
 
-# Īsi tematiskie apzīmējumi katram no 5 jautājumiem — lieto vēstures/šodienas
-# ieraksta kompaktajā attēlošanā, nevis pilnu jautājuma tekstu katru reizi.
+# Īsi tematiskie apzīmējumi katram jautājumam (emocijzīme, teksts) — lieto
+# šodienas/vēstures ieraksta kompaktajā attēlošanā. Secība sakrīt ar QUESTIONS.
 TOPIC_LABELS = {
+    "morning": {
+        "lv": [("🙏", "Pateicība"), ("🧭", "Kas ES esmu"), ("🌱", "Ko ieviesīšu"), ("🎯", "Galvenais uzdevums"), ("✅", "Prioritātes")],
+        "en": [("🙏", "Gratitude"), ("🧭", "Who I am"), ("🌱", "What I'll bring"), ("🎯", "Main task"), ("✅", "Priorities")],
+        "ru": [("🙏", "Благодарность"), ("🧭", "Кто Я"), ("🌱", "Что внесу"), ("🎯", "Главная задача"), ("✅", "Приоритеты")],
+    },
+    "evening": {
+        "lv": [("🏠", "Rituāli un ikdiena"), ("✨", "Kas jauns"), ("🙏", "Pateicība"), ("🤝", "Palīdzība citiem"), ("📚", "Iemācījos"), ("💡", "Sapratu")],
+        "en": [("🏠", "Rituals and routine"), ("✨", "What's new"), ("🙏", "Gratitude"), ("🤝", "Helping others"), ("📚", "Learned"), ("💡", "Realized")],
+        "ru": [("🏠", "Ритуалы и быт"), ("✨", "Что нового"), ("🙏", "Благодарность"), ("🤝", "Помощь другим"), ("📚", "Уроки дня"), ("💡", "Осознание")],
+    },
+}
+
+# Vecie (pirms rīta/vakara sadalījuma) jautājumu apzīmējumi — tikai vecu ierakstu
+# attēlošanai vēsturē. Jaunie ieraksti tos vairs neizmanto.
+LEGACY_TOPIC_LABELS = {
     "lv": [("🙏", "Pateicība"), ("🏆", "Uzvara"), ("⚠️", "Problēma"), ("🎯", "Nodoms"), ("🌌", "Jautājums Visumam")],
     "en": [("🙏", "Gratitude"), ("🏆", "Win"), ("⚠️", "Challenge"), ("🎯", "Intention"), ("🌌", "Question to the Universe")],
     "ru": [("🙏", "Благодарность"), ("🏆", "Победа"), ("⚠️", "Проблема"), ("🎯", "Намерение"), ("🌌", "Вопрос Вселенной")],
@@ -304,38 +433,49 @@ TEXTS = {
         "btn_help": "❓ Palīdzība",
         "btn_language": "🌐 Valoda",
         "btn_advice": "💡 Padoms",
-        "morning_greeting": "Ir laiks refleksijai! Atbildi ar tekstu vai balss ziņu.",
+        "greeting_morning": "🌅 Labrīt! Laiks rīta jautājumiem. Atbildi ar tekstu vai balss ziņu.",
+        "greeting_evening": "🌙 Labvakar! Laiks vakara jautājumiem. Atbildi ar tekstu vai balss ziņu.",
+        "resume_note": "Turpinām!",
+        "day_word": "diena",
+        "period_morning": "🌅 Rīts",
+        "period_evening": "🌙 Vakars",
         "reflection_label": "Pārdomai",
         "no_active_question": "Šobrīd nav aktīva jautājuma. Nospied \"▶️ Sākt tagad\", lai sāktu šodienas refleksiju.",
-        "choose_time": "Pašreizējais laiks: {current}\n\nIzvēlies jaunu laiku:",
-        "time_set": "Laiks iestatīts uz {time}.",
-        "time_usage": "Lieto formātā: /laiks 08:00",
+        "times_overview": "Pašreizējie laiki:\n🌅 Rīts — {morning}\n🌙 Vakars — {evening}\n\nKuru laiku mainīt?",
+        "choose_time": "{period}: pašlaik {current}.\n\nIzvēlies jaunu laiku:",
+        "time_set": "{period}: laiks iestatīts uz {time}.",
         "custom_time_label": "✏️ Ievadīt pats",
-        "custom_time_prompt": "Ieraksti vēlamo laiku formātā HH:MM (piemēram, 19:30).",
+        "custom_time_prompt": "{period}: ieraksti vēlamo laiku formātā HH:MM (piemēram, 19:30).",
         "invalid_time_format": "Nederīgs formāts. Ieraksti, piemēram, 19:30.",
         "transcribing": "Transkribēju balss ziņu...",
         "recognized_text": "Atpazīts teksts: {text}",
         "transcription_error": "Neizdevās transkribēt: {error}",
         "voice_not_configured": "Balss transkripcija nav konfigurēta.",
-        "thanks_saved": "Paldies! Šodienas ieraksts saglabāts. 🌅",
-        "already_done_today": "Šodienas refleksija jau pabeigta! Lūk, ko šodien pierakstīji:",
+        "thanks_morning": "Paldies! Rīta ieraksts saglabāts. Lai tev laba diena! 🌅",
+        "thanks_evening": "Paldies! Vakara ieraksts saglabāts. Mierīgu vakaru un labu nakti! 🌙",
+        "already_done_morning": "Rīta jautājumi šodien jau pabeigti! Lūk, ko šodien pierakstīji:",
+        "already_done_evening": "Vakara jautājumi šodien jau pabeigti! Lūk, ko šodien pierakstīji:",
         "no_entries": "Vēl nav neviena ieraksta.",
         "no_entries_for_date": "Nav ierakstu par {date}.",
         "today_label": "Šodien",
         "yesterday_label": "Vakar",
         "intro": (
-            "Reizi dienā, plkst. {time}, es tev uzdošu 5 refleksijas jautājumus — "
-            "par pateicību, uzvarām, izaicinājumiem un nodomiem. Kad būsi atbildējis "
-            "uz visiem, tie apkoposies dienas ierakstā. Šos apkopojumus vari jebkurā "
-            "laikā palasīt ar 📓 Šodien vai 📅 Vēsture."
+            "Divreiz dienā — rītā plkst. {morning} un vakarā plkst. {evening} — es tev "
+            "uzdošu jautājumus sev: rītā par pateicību, šodienas galveno uzdevumu un "
+            "prioritātēm, vakarā par paveikto, jauno un iemācīto. Atbildi ar tekstu "
+            "vai balss ziņu. Viss apkopojas dienas ierakstā, ko vari jebkurā laikā "
+            "palasīt ar 📓 Šodien vai 📅 Vēsture."
         ),
         "help": (
             "Lieto pogas apakšā:\n"
-            "▶️ Sākt tagad — sākt šodienas jautājumus\n"
+            "▶️ Sākt tagad — sākt rīta vai vakara jautājumus (pēc pulksteņa: līdz {split} rīta, vēlāk vakara)\n"
             "📓 Šodien — šodienas ieraksts\n"
             "📅 Vēsture — pēdējo dienu ieraksti\n"
-            "⏰ Mainīt laiku — mainīt rīta laiku\n"
-            "🌐 Valoda — mainīt valodu"
+            "⏰ Mainīt laiku — mainīt rīta un vakara laiku\n"
+            "💡 Padoms — īss padoms (reizi 4 stundās)\n"
+            "🌐 Valoda — mainīt valodu\n\n"
+            "Dienas skaitītājs, piemēram, 12/9, nozīmē: 12. diena kopš sākuma, "
+            "un 9 no šīm dienām ir ieraksti."
         ),
     },
     "en": {
@@ -350,38 +490,50 @@ TEXTS = {
         "btn_help": "❓ Help",
         "btn_language": "🌐 Language",
         "btn_advice": "💡 Advice",
-        "morning_greeting": "Time for reflection! Reply with text or a voice message.",
+        "greeting_morning": "🌅 Good morning! Time for your morning questions. Reply with text or a voice message.",
+        "greeting_evening": "🌙 Good evening! Time for your evening questions. Reply with text or a voice message.",
+        "resume_note": "Let's continue!",
+        "day_word": "day",
+        "period_morning": "🌅 Morning",
+        "period_evening": "🌙 Evening",
         "reflection_label": "Something to consider",
         "no_active_question": "There's no active question right now. Tap \"▶️ Start now\" to begin today's reflection.",
-        "choose_time": "Current time: {current}\n\nChoose a new time:",
-        "time_set": "Time set to {time}.",
-        "time_usage": "Use the format: /laiks 08:00",
+        "times_overview": "Current times:\n🌅 Morning — {morning}\n🌙 Evening — {evening}\n\nWhich one do you want to change?",
+        "choose_time": "{period}: currently {current}.\n\nChoose a new time:",
+        "time_set": "{period}: time set to {time}.",
         "custom_time_label": "✏️ Enter manually",
-        "custom_time_prompt": "Type the time you'd like in HH:MM format (e.g. 19:30).",
+        "custom_time_prompt": "{period}: type the time you'd like in HH:MM format (e.g. 19:30).",
         "invalid_time_format": "Invalid format. Please type e.g. 19:30.",
         "transcribing": "Transcribing your voice message...",
         "recognized_text": "Recognized text: {text}",
         "transcription_error": "Transcription failed: {error}",
         "voice_not_configured": "Voice transcription isn't configured.",
-        "thanks_saved": "Thanks! Today's entry is saved. 🌅",
-        "already_done_today": "You've already completed today's reflection! Here's what you wrote today:",
+        "thanks_morning": "Thanks! Your morning entry is saved. Have a great day! 🌅",
+        "thanks_evening": "Thanks! Your evening entry is saved. Have a calm evening and a good night! 🌙",
+        "already_done_morning": "Today's morning questions are already done! Here's what you wrote today:",
+        "already_done_evening": "Today's evening questions are already done! Here's what you wrote today:",
         "no_entries": "No entries yet.",
         "no_entries_for_date": "No entries for {date}.",
         "today_label": "Today",
         "yesterday_label": "Yesterday",
         "intro": (
-            "Once a day, at {time}, I'll ask you 5 reflection questions — "
-            "about gratitude, wins, challenges, and intentions. Once you've "
-            "answered them all, they're compiled into a daily entry. You can "
-            "read these summaries anytime with 📓 Today or 📅 History."
+            "Twice a day — in the morning at {morning} and in the evening at {evening} — "
+            "I'll ask you questions to ask yourself: in the morning about gratitude, "
+            "your main task and priorities; in the evening about what you did, what's "
+            "new and what you learned. Reply with text or a voice message. Everything "
+            "compiles into a daily entry you can read back anytime with 📓 Today or "
+            "📅 History."
         ),
         "help": (
             "Use the buttons below:\n"
-            "▶️ Start now — begin today's questions\n"
+            "▶️ Start now — begin the morning or evening questions (by the clock: morning before {split}, evening after)\n"
             "📓 Today — today's entry\n"
             "📅 History — past entries\n"
-            "⏰ Change time — change your morning time\n"
-            "🌐 Language — change language"
+            "⏰ Change time — change your morning and evening times\n"
+            "💡 Advice — a short piece of advice (once every 4 hours)\n"
+            "🌐 Language — change language\n\n"
+            "The day counter, e.g. 12/9, means: day 12 since you started, "
+            "and 9 of those days have entries."
         ),
     },
     "ru": {
@@ -396,38 +548,50 @@ TEXTS = {
         "btn_help": "❓ Помощь",
         "btn_language": "🌐 Язык",
         "btn_advice": "💡 Совет",
-        "morning_greeting": "Время для рефлексии! Ответь текстом или голосовым сообщением.",
+        "greeting_morning": "🌅 Доброе утро! Время утренних вопросов. Ответь текстом или голосовым сообщением.",
+        "greeting_evening": "🌙 Добрый вечер! Время вечерних вопросов. Ответь текстом или голосовым сообщением.",
+        "resume_note": "Продолжаем!",
+        "day_word": "день",
+        "period_morning": "🌅 Утро",
+        "period_evening": "🌙 Вечер",
         "reflection_label": "Для размышления",
         "no_active_question": "Сейчас нет активного вопроса. Нажми «▶️ Начать сейчас», чтобы начать сегодняшнюю рефлексию.",
-        "choose_time": "Текущее время: {current}\n\nВыбери новое время:",
-        "time_set": "Время установлено на {time}.",
-        "time_usage": "Используй формат: /laiks 08:00",
+        "times_overview": "Текущее время:\n🌅 Утро — {morning}\n🌙 Вечер — {evening}\n\nКакое время изменить?",
+        "choose_time": "{period}: сейчас {current}.\n\nВыбери новое время:",
+        "time_set": "{period}: время установлено на {time}.",
         "custom_time_label": "✏️ Ввести вручную",
-        "custom_time_prompt": "Введи нужное время в формате ЧЧ:ММ (например, 19:30).",
+        "custom_time_prompt": "{period}: введи нужное время в формате ЧЧ:ММ (например, 19:30).",
         "invalid_time_format": "Неверный формат. Введи, например, 19:30.",
         "transcribing": "Расшифровываю голосовое сообщение...",
         "recognized_text": "Распознанный текст: {text}",
         "transcription_error": "Не удалось расшифровать: {error}",
         "voice_not_configured": "Расшифровка голоса не настроена.",
-        "thanks_saved": "Спасибо! Сегодняшняя запись сохранена. 🌅",
-        "already_done_today": "Сегодняшняя рефлексия уже завершена! Вот что ты записал сегодня:",
+        "thanks_morning": "Спасибо! Утренняя запись сохранена. Хорошего дня! 🌅",
+        "thanks_evening": "Спасибо! Вечерняя запись сохранена. Спокойного вечера и доброй ночи! 🌙",
+        "already_done_morning": "Утренние вопросы на сегодня уже пройдены! Вот твои записи за сегодня:",
+        "already_done_evening": "Вечерние вопросы на сегодня уже пройдены! Вот твои записи за сегодня:",
         "no_entries": "Пока нет записей.",
         "no_entries_for_date": "Нет записей за {date}.",
         "today_label": "Сегодня",
         "yesterday_label": "Вчера",
         "intro": (
-            "Раз в день, в {time}, я буду задавать тебе 5 вопросов для "
-            "рефлексии — о благодарности, победах, проблемах и намерениях. "
-            "Когда ответишь на все, они соберутся в запись за день. Эти сводки "
-            "можно читать в любое время с помощью 📓 Сегодня или 📅 История."
+            "Дважды в день — утром в {morning} и вечером в {evening} — я буду "
+            "задавать тебе вопросы к самому себе: утром о благодарности, главной "
+            "задаче и приоритетах; вечером о том, что сделано, что нового и чему "
+            "научил день. Отвечай текстом или голосовым сообщением. Всё собирается "
+            "в запись за день, которую можно читать в любое время с помощью "
+            "📓 Сегодня или 📅 История."
         ),
         "help": (
             "Используй кнопки внизу:\n"
-            "▶️ Начать сейчас — начать сегодняшние вопросы\n"
+            "▶️ Начать сейчас — начать утренние или вечерние вопросы (по времени: до {split} утренние, позже вечерние)\n"
             "📓 Сегодня — запись за сегодня\n"
             "📅 История — прошлые записи\n"
-            "⏰ Изменить время — изменить утреннее время\n"
-            "🌐 Язык — сменить язык"
+            "⏰ Изменить время — изменить время утра и вечера\n"
+            "💡 Совет — короткий совет (раз в 4 часа)\n"
+            "🌐 Язык — сменить язык\n\n"
+            "Счётчик дней, например 12/9, означает: 12-й день с начала, "
+            "и в 9 из этих дней есть записи."
         ),
     },
 }
@@ -460,14 +624,34 @@ def language_keyboard():
     return InlineKeyboardMarkup(buttons)
 
 
-TIME_PRESETS = ["06:30", "07:00", "07:30", "08:00", "08:30", "09:00"]
+TIME_PRESETS = {
+    "morning": ["06:30", "07:00", "07:30", "08:00", "08:30", "09:00"],
+    "evening": ["19:30", "20:00", "20:30", "21:00", "21:30", "22:00"],
+}
 
 
-def time_menu_keyboard(lang):
+def period_picker_keyboard(lang):
     tx = TEXTS.get(lang, TEXTS[DEFAULT_LANGUAGE])
-    buttons = [InlineKeyboardButton(tm, callback_data=f"settime:{tm}") for tm in TIME_PRESETS]
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(tx["period_morning"], callback_data="pickperiod:morning"),
+                InlineKeyboardButton(tx["period_evening"], callback_data="pickperiod:evening"),
+            ]
+        ]
+    )
+
+
+def time_menu_keyboard(lang, period):
+    tx = TEXTS.get(lang, TEXTS[DEFAULT_LANGUAGE])
+    buttons = [
+        InlineKeyboardButton(tm, callback_data=f"settime:{period}:{tm}")
+        for tm in TIME_PRESETS[period]
+    ]
     rows = [buttons[i : i + 3] for i in range(0, len(buttons), 3)]
-    rows.append([InlineKeyboardButton(tx["custom_time_label"], callback_data="settime:custom")])
+    rows.append(
+        [InlineKeyboardButton(tx["custom_time_label"], callback_data=f"settime:{period}:custom")]
+    )
     return InlineKeyboardMarkup(rows)
 
 
@@ -503,20 +687,23 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users (
             chat_id INTEGER PRIMARY KEY,
             morning_time TEXT NOT NULL DEFAULT '08:00',
+            evening_time TEXT NOT NULL DEFAULT '21:00',
             language TEXT NOT NULL DEFAULT 'lv',
             active INTEGER NOT NULL DEFAULT 1
         );
         CREATE TABLE IF NOT EXISTS sessions (
             chat_id INTEGER NOT NULL,
             date TEXT NOT NULL,
+            period TEXT NOT NULL DEFAULT 'legacy',
             current_index INTEGER NOT NULL DEFAULT 0,
             done INTEGER NOT NULL DEFAULT 0,
-            PRIMARY KEY (chat_id, date)
+            PRIMARY KEY (chat_id, date, period)
         );
         CREATE TABLE IF NOT EXISTS answers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             chat_id INTEGER NOT NULL,
             date TEXT NOT NULL,
+            period TEXT NOT NULL DEFAULT 'legacy',
             question_index INTEGER NOT NULL,
             question_text TEXT NOT NULL,
             answer_text TEXT NOT NULL,
@@ -530,21 +717,39 @@ def init_db():
         );
         """
     )
-    # migrācija esošām datubāzēm, kas izveidotas pirms valodas atbalsta
-    try:
-        conn.execute("ALTER TABLE users ADD COLUMN language TEXT NOT NULL DEFAULT 'lv'")
-    except sqlite3.OperationalError:
-        pass
-    # migrācija esošām datubāzēm, kas izveidotas pirms padoma intervāla atbalsta
-    try:
-        conn.execute("ALTER TABLE users ADD COLUMN last_advice_at TEXT")
-    except sqlite3.OperationalError:
-        pass
-    # migrācija esošām datubāzēm, kas izveidotas pirms padoma skaitītāja atbalsta
-    try:
-        conn.execute("ALTER TABLE users ADD COLUMN advice_count INTEGER NOT NULL DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
+    # migrācijas esošām datubāzēm (ALTER met kļūdu, ja kolonna jau ir — to ignorējam)
+    for statement in (
+        "ALTER TABLE users ADD COLUMN language TEXT NOT NULL DEFAULT 'lv'",
+        "ALTER TABLE users ADD COLUMN last_advice_at TEXT",
+        "ALTER TABLE users ADD COLUMN advice_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN evening_time TEXT NOT NULL DEFAULT '21:00'",
+        "ALTER TABLE answers ADD COLUMN period TEXT NOT NULL DEFAULT 'legacy'",
+    ):
+        try:
+            conn.execute(statement)
+        except sqlite3.OperationalError:
+            pass
+    # sesiju tabulai jāmaina primārā atslēga (pievienojas period), tāpēc to pārbūvējam.
+    # Vecās sesijas kļūst par 'legacy'; nepabeigtās vecās tiek dzēstas (to atbildes paliek).
+    session_cols = [r[1] for r in conn.execute("PRAGMA table_info(sessions)").fetchall()]
+    if "period" not in session_cols:
+        conn.executescript(
+            """
+            ALTER TABLE sessions RENAME TO sessions_old;
+            CREATE TABLE sessions (
+                chat_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                period TEXT NOT NULL DEFAULT 'legacy',
+                current_index INTEGER NOT NULL DEFAULT 0,
+                done INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (chat_id, date, period)
+            );
+            INSERT INTO sessions (chat_id, date, period, current_index, done)
+                SELECT chat_id, date, 'legacy', current_index, done FROM sessions_old;
+            DROP TABLE sessions_old;
+            DELETE FROM sessions WHERE period = 'legacy' AND done = 0;
+            """
+        )
     # sākotnējais frāžu pildījums — tikai vienreiz, ja tabula vēl tukša
     count = conn.execute("SELECT COUNT(*) FROM advice").fetchone()[0]
     if count == 0:
@@ -561,8 +766,20 @@ def today_str():
     return datetime.now(TIMEZONE).strftime("%Y-%m-%d")
 
 
-def now_hhmm():
-    return datetime.now(TIMEZONE).strftime("%H:%M")
+def period_for_now():
+    """Pirms SESSION_SPLIT_HOUR — rīts, no tās — vakars (izmanto "Sākt tagad")."""
+    return "morning" if datetime.now(TIMEZONE).hour < SESSION_SPLIT_HOUR else "evening"
+
+
+def parse_hhmm(text):
+    """Atgriež laiku formātā HH:MM vai None, ja ievade nav derīgs laiks."""
+    match = re.match(r"^\s*(\d{1,2}):(\d{2})\s*$", text or "")
+    if not match:
+        return None
+    hours, minutes = int(match.group(1)), int(match.group(2))
+    if 0 <= hours < 24 and 0 <= minutes < 60:
+        return f"{hours:02d}:{minutes:02d}"
+    return None
 
 
 def get_user_language(chat_id):
@@ -574,69 +791,158 @@ def get_user_language(chat_id):
     return DEFAULT_LANGUAGE
 
 
-def set_user_language(chat_id, lang):
+def ensure_user(chat_id, lang=None):
+    """Izveido lietotāju, ja tāda vēl nav. Esošam lietotājam neko nemaina —
+    tāpēc atgriezušam lietotājam saglabājas viņa iepriekš izvēlētā valoda."""
     conn = db()
     conn.execute(
-        "INSERT INTO users (chat_id, morning_time, language, active) VALUES (?, ?, ?, 1) "
-        "ON CONFLICT(chat_id) DO UPDATE SET language=excluded.language",
-        (chat_id, DEFAULT_MORNING_TIME, lang),
+        "INSERT OR IGNORE INTO users (chat_id, morning_time, evening_time, language, active) "
+        "VALUES (?, ?, ?, ?, 1)",
+        (chat_id, DEFAULT_MORNING_TIME, DEFAULT_EVENING_TIME, lang or DEFAULT_LANGUAGE),
     )
     conn.commit()
     conn.close()
 
 
-def get_user_morning_time(chat_id):
+def set_user_language(chat_id, lang):
+    ensure_user(chat_id, lang)
     conn = db()
-    row = conn.execute("SELECT morning_time FROM users WHERE chat_id=?", (chat_id,)).fetchone()
+    conn.execute("UPDATE users SET language=? WHERE chat_id=?", (lang, chat_id))
+    conn.commit()
     conn.close()
-    return row[0] if row else DEFAULT_MORNING_TIME
+
+
+def get_user_times(chat_id):
+    """Atgriež (rīta laiks, vakara laiks)."""
+    conn = db()
+    row = conn.execute(
+        "SELECT morning_time, evening_time FROM users WHERE chat_id=?", (chat_id,)
+    ).fetchone()
+    conn.close()
+    if row:
+        return row[0], row[1]
+    return DEFAULT_MORNING_TIME, DEFAULT_EVENING_TIME
+
+
+def set_user_time(chat_id, period, hhmm):
+    column = "morning_time" if period == "morning" else "evening_time"
+    ensure_user(chat_id)
+    conn = db()
+    conn.execute(f"UPDATE users SET {column}=? WHERE chat_id=?", (hhmm, chat_id))
+    conn.commit()
+    conn.close()
+
+
+def get_session(chat_id, date, period):
+    """Atgriež (done, current_index) vai None, ja sesijas nav."""
+    conn = db()
+    row = conn.execute(
+        "SELECT done, current_index FROM sessions WHERE chat_id=? AND date=? AND period=?",
+        (chat_id, date, period),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def get_active_session(chat_id):
+    """Pēdējā uzsāktā, vēl nepabeigtā sesija: (date, period, current_index) vai None."""
+    conn = db()
+    row = conn.execute(
+        "SELECT date, period, current_index FROM sessions WHERE chat_id=? AND done=0 "
+        "ORDER BY rowid DESC LIMIT 1",
+        (chat_id,),
+    ).fetchone()
+    conn.close()
+    return row
 
 
 # ---------- Palīgfunkcijas ----------
 
-async def send_question(chat_id, idx, lang, context: ContextTypes.DEFAULT_TYPE):
-    questions = QUESTIONS.get(lang, QUESTIONS[DEFAULT_LANGUAGE])
-    prompts = REFLECTION_PROMPTS.get(lang, REFLECTION_PROMPTS[DEFAULT_LANGUAGE])
+def esc(text):
+    """HTML izbēgšana Telegram HTML režīmam (pēdiņas nav jāizbēg teksta mezglos)."""
+    return html_escape(str(text), quote=False)
+
+
+async def send_question(chat_id, idx, period, lang, context: ContextTypes.DEFAULT_TYPE):
+    questions = QUESTIONS[period].get(lang, QUESTIONS[period][DEFAULT_LANGUAGE])
+    prompts = REFLECTION_PROMPTS[period].get(lang, REFLECTION_PROMPTS[period][DEFAULT_LANGUAGE])
     total = len(questions)
     reflection_label = t(lang, "reflection_label")
     text = (
-        f"({idx + 1}/{total}) {questions[idx]}\n\n"
-        f"{tg_emoji('❓')} {reflection_label}: {prompts[idx]}"
+        f"({idx + 1}/{total}) {esc(questions[idx])}\n\n"
+        f"{tg_emoji('❓')} {esc(reflection_label)}: {esc(prompts[idx])}"
     )
     await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
 
 
-async def start_daily_flow(chat_id, context: ContextTypes.DEFAULT_TYPE, date=None):
+async def start_session(chat_id, context: ContextTypes.DEFAULT_TYPE, period, date=None):
+    """Sāk rīta vai vakara jautājumu sesiju. Ja šim periodam šajā datumā sesija jau
+    pastāv (pabeigta vai nē), neko nedara un atgriež False."""
     if date is None:
         date = today_str()
     conn = db()
     existing = conn.execute(
-        "SELECT 1 FROM sessions WHERE chat_id=? AND date=?", (chat_id, date)
+        "SELECT 1 FROM sessions WHERE chat_id=? AND date=? AND period=?",
+        (chat_id, date, period),
     ).fetchone()
     if existing:
         conn.close()
-        return
+        return False
+    # Iepriekšējās nepabeigtās sesijas (piem., ignorēts rīta atgādinājums) tiek slēgtas,
+    # lai jaunā atbilde nenonāk pie veca jautājuma. Jau saglabātās atbildes paliek.
+    conn.execute("DELETE FROM sessions WHERE chat_id=? AND done=0", (chat_id,))
     conn.execute(
-        "INSERT INTO sessions (chat_id, date, current_index, done) VALUES (?, ?, 0, 0)",
-        (chat_id, date),
+        "INSERT INTO sessions (chat_id, date, period, current_index, done) VALUES (?, ?, ?, 0, 0)",
+        (chat_id, date, period),
     )
     conn.commit()
     conn.close()
     lang = get_user_language(chat_id)
-    await context.bot.send_message(chat_id=chat_id, text=t(lang, "morning_greeting"))
-    await send_question(chat_id, 0, lang, context)
+    day_line = f"{full_date_label(date, lang)} · {day_suffix(chat_id, date, lang)}"
+    await context.bot.send_message(
+        chat_id=chat_id, text=f"{t(lang, 'greeting_' + period)}\n{day_line}"
+    )
+    await send_question(chat_id, 0, period, lang, context)
+    return True
+
+
+def _to_minutes(hhmm):
+    hours, minutes = hhmm.split(":")
+    return int(hours) * 60 + int(minutes)
 
 
 async def check_and_trigger(context: ContextTypes.DEFAULT_TYPE):
-    """Palaižas ik minūti, pārbauda vai kādam lietotājam ir pienācis rīta laiks."""
-    hhmm = now_hhmm()
+    """Palaižas ik minūti. Katram aktīvam lietotājam sāk rīta/vakara sesiju, kad pienācis
+    viņa iestatītais laiks un šim periodam šodien vēl nav sesijas.
+
+    Lietotājiem, kuriem jau ir vēsture, atgādinājums tiek sūtīts arī tad, ja plānotais
+    laiks pagājis līdz REMINDER_WINDOW_MIN minūtēm (lai bota pārstartēšana vai izlaista
+    minūte neizraisītu atgādinājuma zudumu). Pavisam jauniem lietotājiem — tikai pašā
+    minūtē, lai reģistrējoties pēc noklusējuma laika viņi nesaņemtu sesiju uzreiz."""
+    now = datetime.now(TIMEZONE)
+    now_min = now.hour * 60 + now.minute
+    date = today_str()
     conn = db()
-    rows = conn.execute(
-        "SELECT chat_id FROM users WHERE active=1 AND morning_time=?", (hhmm,)
+    users = conn.execute(
+        "SELECT chat_id, morning_time, evening_time FROM users WHERE active=1"
     ).fetchall()
+    started_today = set(
+        conn.execute("SELECT chat_id, period FROM sessions WHERE date=?", (date,)).fetchall()
+    )
+    has_history = {r[0] for r in conn.execute("SELECT DISTINCT chat_id FROM sessions").fetchall()}
     conn.close()
-    for (chat_id,) in rows:
-        await start_daily_flow(chat_id, context)
+    for chat_id, morning_time, evening_time in users:
+        window = REMINDER_WINDOW_MIN if chat_id in has_history else 1
+        for period, hhmm in (("morning", morning_time), ("evening", evening_time)):
+            try:
+                diff = now_min - _to_minutes(hhmm)
+            except (ValueError, AttributeError):
+                continue
+            if 0 <= diff < window and (chat_id, period) not in started_today:
+                try:
+                    await start_session(chat_id, context, period)
+                except Exception:
+                    logger.exception("Neizdevās sākt %s sesiju lietotājam %s", period, chat_id)
 
 
 async def transcribe_voice(file_path_ogg: str, lang: str) -> str:
@@ -653,10 +959,22 @@ async def transcribe_voice(file_path_ogg: str, lang: str) -> str:
 
 HISTORY_DAYS_FOR_ENCOURAGEMENT = 7
 
+# Secība, kādā bloki tiek rādīti vienas dienas ierakstā
+PERIOD_ORDER = {"legacy": 0, "morning": 1, "evening": 2}
+
+
+def topic_label(period, idx, lang):
+    """Atgriež (emocijzīme, teksts) jautājuma apzīmējumam konkrētā periodā."""
+    table = LEGACY_TOPIC_LABELS if period == "legacy" else TOPIC_LABELS.get(period, {})
+    labels = table.get(lang) or table.get(DEFAULT_LANGUAGE) or []
+    if 0 <= idx < len(labels):
+        return labels[idx]
+    return ("❓", f"Q{idx + 1}")
+
 
 def get_recent_answers_by_date(chat_id, days=HISTORY_DAYS_FOR_ENCOURAGEMENT):
-    """Atgriež pēdējo N dienu atbildes kā {date: {question_index: answer_text}},
-    sakārtotas hronoloģiski (vecākā -> jaunākā)."""
+    """Atgriež pēdējo N dienu atbildes kā {date: [(period, question_index, answer), ...]},
+    sakārtotas hronoloģiski (vecākā -> jaunākā), katras dienas ietvaros rīts pirms vakara."""
     conn = db()
     dates = conn.execute(
         "SELECT DISTINCT date FROM answers WHERE chat_id=? ORDER BY date DESC LIMIT ?",
@@ -665,43 +983,60 @@ def get_recent_answers_by_date(chat_id, days=HISTORY_DAYS_FOR_ENCOURAGEMENT):
     result = {}
     for (d,) in dates:
         rows = conn.execute(
-            "SELECT question_index, answer_text FROM answers "
-            "WHERE chat_id=? AND date=? ORDER BY question_index",
+            "SELECT period, question_index, answer_text FROM answers "
+            "WHERE chat_id=? AND date=? ORDER BY id",
             (chat_id, d),
         ).fetchall()
-        result[d] = {idx: a for idx, a in rows}
+        rows.sort(key=lambda r: (PERIOD_ORDER.get(r[0], 0), r[1]))
+        result[d] = rows
     conn.close()
-    return dict(sorted(result.items()))  # hronoloģiski: vecākā -> jaunākā (šodiena pēdējā)
+    return dict(sorted(result.items()))
 
 
-async def generate_encouragement(chat_id, lang: str) -> str | None:
-    """Ģenerē īsu, personalizētu apsveikumu, analizējot pēdējo N dienu atbildes
-    (ne tikai šodienu) — meklē modeļus/progresu, bet uzsver šodienas uzvaru un
-    nodomu. Atgriež None, ja OpenAI izsaukums neizdodas (piem., nav kredītu) —
-    tad vienkārši izlaižam šo ziņu, negraujot pārējo plūsmu."""
+async def generate_encouragement(chat_id, lang: str, period, date) -> str | None:
+    """Ģenerē īsu, personalizētu ziņu pēc pabeigtas sesijas. Rītā — uzmundrinājums par
+    šodienas galveno uzdevumu un prioritātēm; vakarā — apsveikums par paveikto, kas
+    godīgi sasaistīts ar rīta nodomu. Atgriež None, ja OpenAI izsaukums neizdodas
+    (piem., nav kredītu) — tad vienkārši izlaižam šo ziņu, negraujot pārējo plūsmu."""
     if not openai_client:
         return None
-    topics = TOPIC_LABELS.get(lang, TOPIC_LABELS[DEFAULT_LANGUAGE])
     language_name = LANGUAGE_NAMES_FOR_PROMPT.get(lang, "English")
     recent = get_recent_answers_by_date(chat_id)
     if not recent:
         return None
     blocks = []
-    dates_sorted = list(recent.keys())
-    for d in dates_sorted:
-        label = "TODAY" if d == dates_sorted[-1] else d
-        lines = [f"{topics[idx][1]}: {a}" for idx, a in sorted(recent[d].items())]
+    for d, entries in recent.items():
+        label = "TODAY" if d == date else d
+        lines = [f"({p}) {topic_label(p, idx, lang)[1]}: {a}" for p, idx, a in entries]
         blocks.append(f"[{label}]\n" + "\n".join(lines))
     context_lines = "\n\n".join(blocks)
+    if period == "morning":
+        task = (
+            "It is MORNING and they just answered today's morning questions. Write a "
+            "short message (2-4 sentences): (1) acknowledge something specific and real "
+            "from TODAY's morning answers, such as what they are grateful for or who they "
+            "say they are today, (2) warmly encourage them about TODAY's main task and "
+            "priorities, referencing their actual words, (3) only if there is a genuine "
+            "pattern or follow-through from earlier days, mention it briefly — never "
+            "invent one. "
+        )
+    else:
+        task = (
+            "It is EVENING and they just answered today's evening questions. Write a "
+            "short message (3-5 sentences): (1) congratulate them specifically on what "
+            "they did, learned or experienced today, referencing their actual words, "
+            "(2) if TODAY's morning answers contain a main task or priorities, briefly "
+            "and honestly connect them with what the evening answers show — only what is "
+            "evident, never invent progress, (3) close warmly with a wish for a calm "
+            "evening and rest. "
+        )
     system_prompt = (
         "You are a warm, genuine companion helping someone reflect on their day. "
-        f"Below are their daily reflection answers from up to the last {HISTORY_DAYS_FOR_ENCOURAGEMENT} "
-        "days, oldest first, with today's entry marked [TODAY]. Write a short message "
-        "(3-5 sentences): (1) congratulate them specifically on TODAY's win/success, "
-        "referencing their actual words, (2) if you notice a genuine pattern, recurring "
-        "theme, or follow-through on something from earlier days, mention it briefly — "
-        "only if it's real, never invent one, and (3) warmly encourage them about TODAY's "
-        "stated intention/commitment. Be specific and genuine, not generic or saccharine. "
+        f"Below are their reflection answers from up to the last {HISTORY_DAYS_FOR_ENCOURAGEMENT} "
+        "days, oldest first, each tagged with its session (morning or evening) and topic; "
+        "today's entries are marked [TODAY]. "
+        + task
+        + "Be specific and genuine, not generic or saccharine. "
         f"No preamble, no greeting, just the message itself. Respond ONLY in {language_name}."
     )
     try:
@@ -711,13 +1046,28 @@ async def generate_encouragement(chat_id, lang: str) -> str | None:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": context_lines},
             ],
-            max_tokens=250,
+            max_tokens=300,
             temperature=0.8,
         )
         return response.choices[0].message.content.strip()
     except Exception:
         logger.exception("Neizdevās ģenerēt uzmundrinājumu")
         return None
+
+
+def full_date_label(date_str, lang):
+    """Datums ar nedēļas dienu, bez gada, piem. "Otrdiena, 8. septembris"."""
+    try:
+        d = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        return date_str
+    weekday = WEEKDAYS.get(lang, WEEKDAYS[DEFAULT_LANGUAGE])[d.weekday()]
+    month = MONTHS.get(lang, MONTHS[DEFAULT_LANGUAGE])[d.month - 1]
+    if lang == "en":
+        return f"{weekday}, {month} {d.day}"
+    if lang == "ru":
+        return f"{weekday}, {d.day} {month}"
+    return f"{weekday}, {d.day}. {month}"
 
 
 def relative_date_label(date_str, lang):
@@ -730,42 +1080,104 @@ def relative_date_label(date_str, lang):
         return t(lang, "today_label")
     if d == today - timedelta(days=1):
         return t(lang, "yesterday_label")
-    weekday = WEEKDAYS.get(lang, WEEKDAYS[DEFAULT_LANGUAGE])[d.weekday()]
-    month = MONTHS.get(lang, MONTHS[DEFAULT_LANGUAGE])[d.month - 1]
-    if lang == "en":
-        return f"{weekday}, {month} {d.day}"
-    if lang == "ru":
-        return f"{weekday}, {d.day} {month}"
-    return f"{weekday}, {d.day}. {month}"
+    return full_date_label(date_str, lang)
+
+
+def day_counter(chat_id, date):
+    """Atgriež (n, m): n — kura diena kopš pirmā ieraksta (ieskaitot izlaistās dienas),
+    m — cik dienās līdz šim datumam ir pabeigta vismaz viena sesija (rīts vai vakars)."""
+    conn = db()
+    first = conn.execute("SELECT MIN(date) FROM answers WHERE chat_id=?", (chat_id,)).fetchone()[0]
+    done_days = conn.execute(
+        "SELECT COUNT(DISTINCT date) FROM sessions WHERE chat_id=? AND done=1 AND date<=?",
+        (chat_id, date),
+    ).fetchone()[0]
+    conn.close()
+    try:
+        current = datetime.strptime(date, "%Y-%m-%d").date()
+        start = datetime.strptime(first, "%Y-%m-%d").date() if first else current
+    except (ValueError, TypeError):
+        return 1, done_days
+    return max((current - start).days + 1, 1), done_days
+
+
+def day_suffix(chat_id, date, lang):
+    n, m = day_counter(chat_id, date)
+    return f"{t(lang, 'day_word')} {n}/{m}"
 
 
 def format_entry(chat_id, date, lang) -> str:
     conn = db()
     rows = conn.execute(
-        "SELECT question_index, answer_text FROM answers "
-        "WHERE chat_id=? AND date=? ORDER BY question_index",
+        "SELECT period, question_index, answer_text FROM answers "
+        "WHERE chat_id=? AND date=? ORDER BY id",
         (chat_id, date),
     ).fetchall()
     conn.close()
     label = relative_date_label(date, lang)
     if not rows:
-        return t(lang, "no_entries_for_date", date=html_escape(label))
-    topic_labels = TOPIC_LABELS.get(lang, TOPIC_LABELS[DEFAULT_LANGUAGE])
-    lines = [f"<b>{tg_emoji('📓')} {html_escape(label)}</b>"]
-    for idx, a in rows:
-        if idx < len(topic_labels):
-            emoji, text = topic_labels[idx]
-        else:
-            emoji, text = ("❓", f"Q{idx + 1}")
-        lines.append(f"<b>{tg_emoji(emoji)} {html_escape(text)}:</b> {html_escape(a)}")
+        return t(lang, "no_entries_for_date", date=esc(label))
+    rows.sort(key=lambda r: (PERIOD_ORDER.get(r[0], 0), r[1]))
+    header = f"{tg_emoji('📓')} {esc(label)} · {esc(day_suffix(chat_id, date, lang))}"
+    lines = [f"<b>{header}</b>"]
+    current_period = None
+    for period, idx, answer in rows:
+        if period != current_period:
+            current_period = period
+            if period in PERIODS:
+                lines.append("")
+                lines.append(f"<b>{esc(t(lang, 'period_' + period))}</b>")
+        emoji, text = topic_label(period, idx, lang)
+        lines.append(f"<b>{tg_emoji(emoji)} {esc(text)}:</b> {esc(answer)}")
     return "\n".join(lines)
+
+
+TELEGRAM_TEXT_LIMIT = 3900  # Telegram ziņas robeža ir 4096 rakstzīmes
+
+
+def split_for_telegram(text, limit=TELEGRAM_TEXT_LIMIT):
+    """Sadala garu HTML tekstu daļās pa rindām. Mūsu tagi nekad neiet pāri rindai,
+    tāpēc dalīšana pa rindām ir droša."""
+    if len(text) <= limit:
+        return [text]
+    parts = []
+    current = ""
+
+    def flush():
+        nonlocal current
+        if current.strip():
+            parts.append(current)
+        current = ""
+
+    for line in text.split("\n"):
+        while len(line) > limit:  # ļoti gara viena rinda (piem., gara atbilde)
+            cut = line.rfind(" ", 0, limit)
+            if cut <= 0:
+                cut = limit
+            amp = line.rfind("&", 0, cut)
+            if amp > 0 and cut - amp < 8 and ";" not in line[amp:cut]:
+                cut = amp  # nesagriež HTML entītiju pušu
+            flush()
+            parts.append(line[:cut])
+            line = line[cut:].lstrip(" ")
+        candidate = f"{current}\n{line}" if current else line
+        if len(candidate) > limit:
+            flush()
+            current = line
+        else:
+            current = candidate
+    flush()
+    return parts
+
+
+async def send_html(context: ContextTypes.DEFAULT_TYPE, chat_id, text):
+    for part in split_for_telegram(text):
+        await context.bot.send_message(chat_id=chat_id, text=part, parse_mode="HTML")
 
 
 async def send_today_entry(chat_id, context: ContextTypes.DEFAULT_TYPE):
     lang = get_user_language(chat_id)
-    await context.bot.send_message(
-        chat_id=chat_id, text=format_entry(chat_id, today_str(), lang), parse_mode="HTML"
-    )
+    await send_html(context, chat_id, format_entry(chat_id, today_str(), lang))
 
 
 async def send_history_entries(chat_id, n, context: ContextTypes.DEFAULT_TYPE):
@@ -780,9 +1192,7 @@ async def send_history_entries(chat_id, n, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat_id, text=t(lang, "no_entries"))
         return
     for (date,) in dates:
-        await context.bot.send_message(
-            chat_id=chat_id, text=format_entry(chat_id, date, lang), parse_mode="HTML"
-        )
+        await send_html(context, chat_id, format_entry(chat_id, date, lang))
 
 
 async def prompt_language_change(chat_id, context: ContextTypes.DEFAULT_TYPE):
@@ -827,8 +1237,16 @@ def set_last_advice_at(chat_id, dt):
     conn.close()
 
 
+# Kuri jautājumi (pēc indeksa) katrā periodā der kā iedvesma jaunām padoma frāzēm
+INSPIRATION_TOPICS = {
+    "morning": {0, 1, 3},   # pateicība, kas ES esmu, galvenais uzdevums
+    "evening": {1, 2, 4, 5},  # kas jauns, pateicība, iemācījos, sapratu
+    "legacy": {0, 1, 3},
+}
+
+
 async def generate_and_store_new_advice(chat_id):
-    """Analizē lietotāja pēdējo dienu atbilžu modeļus (pateicība/uzvara/nodoms)
+    """Analizē lietotāja pēdējo dienu atbilžu modeļus (pateicība, jaunais, iemācītais)
     un ģenerē VIENU jaunu, VISPĀRINĀTU padoma frāzi visās 3 valodās, pievienojot
     to kopīgajai advice tabulai. Frāze nedrīkst saturēt personiskas detaļas, jo
     tā nonāk kopīgajā, visiem redzamajā krājumā. Kļūdas gadījumā vienkārši
@@ -839,10 +1257,10 @@ async def generate_and_store_new_advice(chat_id):
     if not recent:
         return
     lines = []
-    for d, answers in recent.items():
-        for idx in (0, 1, 3):  # pateicība, uzvara, nodoms — iedvesmas avots
-            if idx in answers:
-                lines.append(f"{TOPIC_LABELS['en'][idx][1]}: {answers[idx]}")
+    for d, entries in recent.items():
+        for period, idx, answer in entries:
+            if idx in INSPIRATION_TOPICS.get(period, set()):
+                lines.append(f"{topic_label(period, idx, 'en')[1]}: {answer}")
     if not lines:
         return
     context_text = "\n".join(lines)
@@ -890,83 +1308,61 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user = update.effective_user
     telegram_lang_code = user.language_code if user else None
-    detected_lang = detect_language(telegram_lang_code)
-
-    conn = db()
-    # INSERT OR IGNORE: ja lietotājs jau pastāv (atgriezies), viņa iepriekš
-    # izvēlētā valoda saglabājas — auto-noteikšana attiecas tikai uz jauniem lietotājiem.
-    conn.execute(
-        "INSERT OR IGNORE INTO users (chat_id, morning_time, language, active) VALUES (?, ?, ?, 1)",
-        (chat_id, DEFAULT_MORNING_TIME, detected_lang),
-    )
-    conn.commit()
-    conn.close()
+    # ensure_user neko nemaina esošam lietotājam — auto-noteikšana attiecas tikai uz jauniem.
+    ensure_user(chat_id, detect_language(telegram_lang_code))
 
     lang = get_user_language(chat_id)
-    morning_time = get_user_morning_time(chat_id)
+    morning_time, evening_time = get_user_times(chat_id)
     name = user.first_name if user else None
     greeting = t(lang, "greeting_named", name=name) if name else t(lang, "greeting_plain")
-    message = f"{greeting}\n\n{t(lang, 'intro', time=morning_time)}\n\n{t(lang, 'language_hint')}"
+    intro = t(lang, "intro", morning=morning_time, evening=evening_time)
+    message = f"{greeting}\n\n{intro}\n\n{t(lang, 'language_hint')}"
     await update.message.reply_text(message, reply_markup=main_menu_keyboard(lang))
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     lang = get_user_language(chat_id)
-    await update.message.reply_text(t(lang, "help"), reply_markup=main_menu_keyboard(lang))
+    await update.message.reply_text(
+        t(lang, "help", split=f"{SESSION_SPLIT_HOUR}:00"), reply_markup=main_menu_keyboard(lang)
+    )
+
+
+async def show_time_menu(chat_id, context: ContextTypes.DEFAULT_TYPE):
+    lang = get_user_language(chat_id)
+    morning_time, evening_time = get_user_times(chat_id)
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=t(lang, "times_overview", morning=morning_time, evening=evening_time),
+        reply_markup=period_picker_keyboard(lang),
+    )
 
 
 async def cmd_laiks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    lang = get_user_language(chat_id)
-    if not context.args or not re.match(r"^\d{1,2}:\d{2}$", context.args[0]):
-        await update.message.reply_text(t(lang, "time_usage"))
-        return
-    new_time = context.args[0]
-    h, m = map(int, new_time.split(":"))
-    if not (0 <= h < 24 and 0 <= m < 60):
-        await update.message.reply_text(t(lang, "time_usage"))
-        return
-    new_time = f"{h:02d}:{m:02d}"
-    conn = db()
-    conn.execute(
-        "INSERT INTO users (chat_id, morning_time, language, active) VALUES (?, ?, ?, 1) "
-        "ON CONFLICT(chat_id) DO UPDATE SET morning_time=excluded.morning_time",
-        (chat_id, new_time, lang),
-    )
-    conn.commit()
-    conn.close()
-    await update.message.reply_text(t(lang, "time_set", time=new_time))
+    context.user_data["awaiting_time"] = None
+    await show_time_menu(update.effective_chat.id, context)
 
 
 async def cmd_tagad(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Sāk rīta vai vakara jautājumus uzreiz. Periodu nosaka pulkstenis:
+    pirms SESSION_SPLIT_HOUR — rīts, vēlāk — vakars."""
     chat_id = update.effective_chat.id
-    detected_lang = detect_language(update.effective_user.language_code if update.effective_user else None)
-    conn = db()
-    conn.execute(
-        "INSERT OR IGNORE INTO users (chat_id, morning_time, language, active) VALUES (?, ?, ?, 1)",
-        (chat_id, DEFAULT_MORNING_TIME, detected_lang),
-    )
-    conn.commit()
+    user = update.effective_user
+    ensure_user(chat_id, detect_language(user.language_code if user else None))
+    lang = get_user_language(chat_id)
+    period = period_for_now()
     date = today_str()
-    row = conn.execute(
-        "SELECT done FROM sessions WHERE chat_id=? AND date=?", (chat_id, date)
-    ).fetchone()
-    if row and row[0] == 1:
-        conn.close()
-        lang = get_user_language(chat_id)
-        await update.message.reply_text(t(lang, "already_done_today"))
-        await context.bot.send_message(
-            chat_id=chat_id, text=format_entry(chat_id, date, lang), parse_mode="HTML"
-        )
+    session = get_session(chat_id, date, period)
+    if session and session[0] == 1:
+        await update.message.reply_text(t(lang, f"already_done_{period}"))
+        await send_html(context, chat_id, format_entry(chat_id, date, lang))
         return
-    conn.execute(
-        "DELETE FROM sessions WHERE chat_id=? AND date=? AND done=0",
-        (chat_id, date),
-    )
-    conn.commit()
-    conn.close()
-    await start_daily_flow(chat_id, context)
+    if session:
+        # sesija jau sākta, bet nepabeigta — turpinām no tā paša jautājuma
+        await update.message.reply_text(t(lang, "resume_note"))
+        await send_question(chat_id, session[1], period, lang, context)
+        return
+    await start_session(chat_id, context, period, date)
 
 
 async def cmd_sodien(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -986,19 +1382,23 @@ async def cmd_valoda(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Testēšanai — parāda, ko Telegram reāli atsūta, ko bots no tā noteica,
-    un kas ir saglabāts datubāzē, lai varētu pārbaudīt valodas noteikšanu."""
+    un kas ir saglabāts datubāzē, lai varētu pārbaudīt valodas un laiku iestatījumus."""
     chat_id = update.effective_chat.id
     user = update.effective_user
     tg_code = user.language_code if user else None
     detected = detect_language(tg_code)
     stored = get_user_language(chat_id)
-    morning_time = get_user_morning_time(chat_id)
+    morning_time, evening_time = get_user_times(chat_id)
+    n, m = day_counter(chat_id, today_str())
     text = (
         "🔧 Debug info\n\n"
         f"Telegram language_code: {tg_code!r}\n"
         f"Auto-noteiktā valoda (šobrīd): {detected}\n"
         f"Saglabātā valoda (datubāzē): {stored}\n"
-        f"Saglabātais laiks: {morning_time}\n"
+        f"Rīta laiks: {morning_time}\n"
+        f"Vakara laiks: {evening_time}\n"
+        f"'Sākt tagad' šobrīd sāktu: {period_for_now()}\n"
+        f"Dienas skaitītājs: {n}/{m}\n"
         f"chat_id: {chat_id}"
     )
     await update.message.reply_text(text)
@@ -1020,24 +1420,31 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Testēšanai — nekavējoties pārceļ uz nākamo simulēto dienu un sāk tās
-    jautājumus, negaidot reālu diennakts maiņu vai plānoto laiku."""
+    """Testēšanai — nekavējoties pārslēdz uz nākamo simulēto sesiju (rīts -> vakars ->
+    nākamās dienas rīts) un sāk to, negaidot reālu laiku vai plānoto atgādinājumu."""
     chat_id = update.effective_chat.id
     conn = db()
     row = conn.execute(
-        "SELECT date FROM sessions WHERE chat_id=? ORDER BY date DESC LIMIT 1",
+        "SELECT date, period FROM sessions WHERE chat_id=? ORDER BY date DESC, "
+        "CASE period WHEN 'morning' THEN 1 WHEN 'evening' THEN 2 ELSE 0 END DESC LIMIT 1",
         (chat_id,),
     ).fetchone()
     conn.close()
-    if row:
+    today = datetime.now(TIMEZONE).date()
+    if not row:
+        next_date, next_period = today, "morning"
+    else:
         try:
             last_date = datetime.strptime(row[0], "%Y-%m-%d").date()
         except ValueError:
-            last_date = datetime.now(TIMEZONE).date()
-    else:
-        last_date = datetime.now(TIMEZONE).date()
-    next_date = (last_date + timedelta(days=1)).strftime("%Y-%m-%d")
-    await start_daily_flow(chat_id, context, date=next_date)
+            last_date = today
+        if last_date < today:
+            next_date, next_period = today, "morning"
+        elif row[1] == "morning":
+            next_date, next_period = last_date, "evening"
+        else:
+            next_date, next_period = last_date + timedelta(days=1), "morning"
+    await start_session(chat_id, context, next_period, next_date.strftime("%Y-%m-%d"))
 
 
 async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1049,11 +1456,28 @@ async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_user_language(chat_id, lang)
     await query.answer()
     await query.edit_message_text(LANGUAGES[lang])
-    morning_time = get_user_morning_time(chat_id)
+    morning_time, evening_time = get_user_times(chat_id)
     await context.bot.send_message(
         chat_id=chat_id,
-        text=t(lang, "intro", time=morning_time),
+        text=t(lang, "intro", morning=morning_time, evening=evening_time),
         reply_markup=main_menu_keyboard(lang),
+    )
+
+
+async def pickperiod_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Lietotājs izvēlējies, kuru laiku mainīt (rīts vai vakars)."""
+    query = update.callback_query
+    chat_id = query.message.chat_id
+    lang = get_user_language(chat_id)
+    period = query.data.split(":", 1)[1]
+    await query.answer()
+    if period not in PERIODS:
+        return
+    morning_time, evening_time = get_user_times(chat_id)
+    current = morning_time if period == "morning" else evening_time
+    await query.edit_message_text(
+        t(lang, "choose_time", period=t(lang, f"period_{period}"), current=current),
+        reply_markup=time_menu_keyboard(lang, period),
     )
 
 
@@ -1061,37 +1485,39 @@ async def settime_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     chat_id = query.message.chat_id
     lang = get_user_language(chat_id)
-    value = query.data.split(":", 1)[1]
+    parts = query.data.split(":", 2)  # settime:<period>:<HH:MM vai custom>
     await query.answer()
+    if len(parts) != 3 or parts[1] not in PERIODS:
+        return
+    period, value = parts[1], parts[2]
+    period_label = t(lang, f"period_{period}")
 
     if value == "custom":
-        context.user_data["awaiting_time"] = True
-        await query.edit_message_text(t(lang, "custom_time_prompt"))
+        context.user_data["awaiting_time"] = period
+        await query.edit_message_text(t(lang, "custom_time_prompt", period=period_label))
         return
 
-    new_time = value
-    conn = db()
-    conn.execute(
-        "INSERT INTO users (chat_id, morning_time, language, active) VALUES (?, ?, ?, 1) "
-        "ON CONFLICT(chat_id) DO UPDATE SET morning_time=excluded.morning_time",
-        (chat_id, new_time, lang),
-    )
-    conn.commit()
-    conn.close()
-    await query.edit_message_text(t(lang, "time_set", time=new_time))
+    new_time = parse_hhmm(value)
+    if not new_time:
+        return
+    set_user_time(chat_id, period, new_time)
+    await query.edit_message_text(t(lang, "time_set", period=period_label, time=new_time))
 
 
 # ---------- Atbilžu apstrāde ----------
 
-async def _save_answer_and_advance(chat_id, date, idx, lang, answer_text, is_voice, context):
-    questions = QUESTIONS.get(lang, QUESTIONS[DEFAULT_LANGUAGE])
+async def _save_answer_and_advance(chat_id, date, period, idx, lang, answer_text, is_voice, context):
+    questions = QUESTIONS[period].get(lang, QUESTIONS[period][DEFAULT_LANGUAGE])
+    next_idx = idx + 1
+    finished = next_idx >= len(questions)
     conn = db()
     conn.execute(
-        "INSERT INTO answers (chat_id, date, question_index, question_text, "
-        "answer_text, is_voice, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO answers (chat_id, date, period, question_index, question_text, "
+        "answer_text, is_voice, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
             chat_id,
             date,
+            period,
             idx,
             questions[idx],
             answer_text,
@@ -1099,33 +1525,26 @@ async def _save_answer_and_advance(chat_id, date, idx, lang, answer_text, is_voi
             datetime.now(TIMEZONE).isoformat(),
         ),
     )
-    next_idx = idx + 1
-    if next_idx >= len(questions):
-        conn.execute(
-            "UPDATE sessions SET current_index=?, done=1 WHERE chat_id=? AND date=?",
-            (next_idx, chat_id, date),
-        )
-        conn.commit()
-        conn.close()
-        await context.bot.send_message(chat_id=chat_id, text=t(lang, "thanks_saved"))
+    conn.execute(
+        "UPDATE sessions SET current_index=?, done=? WHERE chat_id=? AND date=? AND period=?",
+        (next_idx, 1 if finished else 0, chat_id, date, period),
+    )
+    conn.commit()
+    conn.close()
+
+    if not finished:
+        await send_question(chat_id, next_idx, period, lang, context)
+        return
+
+    await context.bot.send_message(chat_id=chat_id, text=t(lang, f"thanks_{period}"))
+    await send_html(context, chat_id, format_entry(chat_id, date, lang))
+    encouragement = await generate_encouragement(chat_id, lang, period, date)
+    if encouragement:
         await context.bot.send_message(
-            chat_id=chat_id, text=format_entry(chat_id, date, lang), parse_mode="HTML"
+            chat_id=chat_id,
+            text=f"{tg_emoji('✨')} {esc(encouragement)}",
+            parse_mode="HTML",
         )
-        encouragement = await generate_encouragement(chat_id, lang)
-        if encouragement:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"{tg_emoji('✨')} {html_escape(encouragement)}",
-                parse_mode="HTML",
-            )
-    else:
-        conn.execute(
-            "UPDATE sessions SET current_index=? WHERE chat_id=? AND date=?",
-            (next_idx, chat_id, date),
-        )
-        conn.commit()
-        conn.close()
-        await send_question(chat_id, next_idx, lang, context)
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1135,7 +1554,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     action = BUTTON_ACTIONS.get(text)
     if action:
-        context.user_data["awaiting_time"] = False
+        context.user_data["awaiting_time"] = None
     if action == "start_now":
         await cmd_tagad(update, context)
         return
@@ -1146,10 +1565,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_history_entries(chat_id, 7, context)
         return
     if action == "time":
-        current_time = get_user_morning_time(chat_id)
-        await update.message.reply_text(
-            t(lang, "choose_time", current=current_time), reply_markup=time_menu_keyboard(lang)
-        )
+        await show_time_menu(chat_id, context)
         return
     if action == "help":
         await cmd_help(update, context)
@@ -1170,61 +1586,43 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         advice = get_random_advice(lang)
         if advice:
             await update.message.reply_text(
-                f"{tg_emoji('💡')} {html_escape(advice)}", parse_mode="HTML"
+                f"{tg_emoji('💡')} {esc(advice)}", parse_mode="HTML"
             )
         await generate_and_store_new_advice(chat_id)
         return
 
-    if context.user_data.get("awaiting_time"):
-        if re.match(r"^\d{1,2}:\d{2}$", text):
-            h, m = map(int, text.split(":"))
-            if 0 <= h < 24 and 0 <= m < 60:
-                new_time = f"{h:02d}:{m:02d}"
-                conn = db()
-                conn.execute(
-                    "INSERT INTO users (chat_id, morning_time, language, active) VALUES (?, ?, ?, 1) "
-                    "ON CONFLICT(chat_id) DO UPDATE SET morning_time=excluded.morning_time",
-                    (chat_id, new_time, lang),
-                )
-                conn.commit()
-                conn.close()
-                context.user_data["awaiting_time"] = False
-                await update.message.reply_text(t(lang, "time_set", time=new_time))
-                return
-        await update.message.reply_text(t(lang, "invalid_time_format"))
+    awaiting = context.user_data.get("awaiting_time")
+    if awaiting in PERIODS:
+        new_time = parse_hhmm(text)
+        if new_time:
+            set_user_time(chat_id, awaiting, new_time)
+            context.user_data["awaiting_time"] = None
+            await update.message.reply_text(
+                t(lang, "time_set", period=t(lang, f"period_{awaiting}"), time=new_time)
+            )
+        else:
+            await update.message.reply_text(t(lang, "invalid_time_format"))
         return
 
-    conn = db()
-    row = conn.execute(
-        "SELECT date, current_index FROM sessions WHERE chat_id=? AND done=0 "
-        "ORDER BY date DESC LIMIT 1",
-        (chat_id,),
-    ).fetchone()
-    conn.close()
-    if not row:
+    session = get_active_session(chat_id)
+    if not session:
         await update.message.reply_text(t(lang, "no_active_question"))
         return
-    date, idx = row
-    await _save_answer_and_advance(chat_id, date, idx, lang, text, False, context)
+    date, period, idx = session
+    await _save_answer_and_advance(chat_id, date, period, idx, lang, text, False, context)
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     lang = get_user_language(chat_id)
-    conn = db()
-    row = conn.execute(
-        "SELECT date, current_index FROM sessions WHERE chat_id=? AND done=0 "
-        "ORDER BY date DESC LIMIT 1",
-        (chat_id,),
-    ).fetchone()
-    conn.close()
-    if not row:
+    session = get_active_session(chat_id)
+    if not session:
         await update.message.reply_text(t(lang, "no_active_question"))
         return
     if not openai_client:
         await update.message.reply_text(t(lang, "voice_not_configured"))
         return
-    date, idx = row
+    date, period, idx = session
     tg_file = await context.bot.get_file(update.message.voice.file_id)
     os.makedirs("tmp", exist_ok=True)
     ogg_path = f"tmp/{chat_id}_{idx}.oga"
@@ -1237,7 +1635,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(t(lang, "transcription_error", error=e))
         return
     await update.message.reply_text(t(lang, "recognized_text", text=text))
-    await _save_answer_and_advance(chat_id, date, idx, lang, text, True, context)
+    await _save_answer_and_advance(chat_id, date, period, idx, lang, text, True, context)
 
 
 # ---------- Palaišana ----------
@@ -1247,10 +1645,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # uzraksta ar roku, bet nav publiski redzamas.
 PUBLIC_COMMANDS = [
     ("start", {"lv": "Sākt / restartēt botu", "en": "Start / restart the bot", "ru": "Запустить / перезапустить бота"}),
-    ("tagad", {"lv": "Sākt šodienas jautājumus", "en": "Start today's questions", "ru": "Начать сегодняшние вопросы"}),
+    ("tagad", {"lv": "Sākt rīta/vakara jautājumus tagad", "en": "Start morning/evening questions now", "ru": "Начать утренние/вечерние вопросы сейчас"}),
     ("sodien", {"lv": "Šodienas ieraksts", "en": "Today's entry", "ru": "Запись за сегодня"}),
     ("vesture", {"lv": "Pēdējo dienu ieraksti", "en": "Recent entries", "ru": "Последние записи"}),
-    ("laiks", {"lv": "Mainīt jautājumu laiku", "en": "Change question time", "ru": "Изменить время вопросов"}),
+    ("laiks", {"lv": "Mainīt rīta/vakara laiku", "en": "Change morning/evening time", "ru": "Изменить время утра/вечера"}),
     ("valoda", {"lv": "Mainīt valodu", "en": "Change language", "ru": "Сменить язык"}),
     ("palidziba", {"lv": "Palīdzība", "en": "Help", "ru": "Помощь"}),
 ]
@@ -1279,6 +1677,7 @@ def main():
     app.add_handler(CommandHandler("next", cmd_next))
     app.add_handler(CommandHandler("debug", cmd_debug))
     app.add_handler(CallbackQueryHandler(language_callback, pattern=r"^lang:"))
+    app.add_handler(CallbackQueryHandler(pickperiod_callback, pattern=r"^pickperiod:"))
     app.add_handler(CallbackQueryHandler(settime_callback, pattern=r"^settime:"))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
