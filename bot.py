@@ -208,9 +208,9 @@ REFLECTION_PROMPTS = {
             "Atskaties uz dienas ierastajām lietām — rīta un vakara rituāliem, mājas "
             "darbiem, ēdienreizēm, kustībām, kārtības uzturēšanu. Kas no tā šodien "
             "izdevās, kas ne, un kā tas gāja — viegli, ar pūlēm vai gandrīz nemanot?",
-            "Padomā par jebko jaunu, kas šodien ienāca tavā dzīvē: pārmaiņu, kādu labu "
-            "notikumu, jaunu pieredzi vai piedzīvojumu, kaut ko, ko uzzināji, vai kaut "
-            "ko jaunu par sevi. Pat mazs atklājums ir ieraksta vērts.",
+            "Kas šodien bija citādāk nekā parasti? Pārmaiņa, negaidīta tikšanās, labs "
+            "notikums, jauna pieredze, piedzīvojums — pat sīks pavērsiens dienas gaitā. "
+            "Pietiek ar to, kas tavā dzīvē šodien parādījās pirmo reizi.",
             "Skaties uz dienu kā uz stāstu — kas tajā bija tāds, par ko vērts pateikt "
             "paldies? Tas var būt cilvēks, notikums vai sīkums. Padomā arī, kam "
             "konkrēti to varētu pateikt skaļi.",
@@ -221,7 +221,7 @@ REFLECTION_PROMPTS = {
             "Pajautā, ko šī diena tev iemācīja — par pasauli, citiem vai sevi. Un "
             "otrādi: ko tu gribētu iemācīties vai attīstīt sevī papildus — nav "
             "obligāti kaut kas liels, pietiek ar vienu nelielu virzienu.",
-            "Atskaties uz to, ko tikko pierakstīji. Vai, atbildot uz šiem jautājumiem, "
+            "Atskaties uz to, ko šodien pierakstīji. Vai, atbildot uz šiem jautājumiem, "
             "kaut kas kļuva skaidrāks — atbilde, jauna doma, atziņa, ko iepriekš "
             "nepamanīji? Ieraksti to, pat ja tā ir tikai viena frāze.",
         ],
@@ -229,10 +229,10 @@ REFLECTION_PROMPTS = {
             "Look back at the everyday things — morning and evening rituals, chores, "
             "meals, movement, keeping things in order. What worked today, what didn't, "
             "and how did it feel — easy, effortful, or almost unnoticed?",
-            "Think of anything new that came into your life today: a change, something "
-            "good that happened, a new experience or adventure, something you learned, "
-            "or something new about yourself. Even a small discovery is worth writing "
-            "down.",
+            "What was different today from the usual? A change, an unexpected meeting, "
+            "something good that happened, a new experience, an adventure — even a "
+            "small turn in the course of the day. Whatever showed up in your life for "
+            "the first time today is enough.",
             "Look at the day like a story — what in it was worth saying thank you for? "
             "It could be a person, an event or a small thing. Also think of who exactly "
             "you could say it to out loud.",
@@ -243,7 +243,7 @@ REFLECTION_PROMPTS = {
             "Ask what this day taught you — about the world, others or yourself. And "
             "the other side: what would you like to learn or develop in yourself — it "
             "doesn't have to be big, one small direction is enough.",
-            "Look back at what you just wrote. Did anything become clearer while "
+            "Look back at what you wrote today. Did anything become clearer while "
             "answering these questions — an answer, a new thought, an insight you "
             "hadn't noticed before? Write it down, even if it's just one sentence.",
         ],
@@ -251,9 +251,10 @@ REFLECTION_PROMPTS = {
             "Оглянись на повседневные дела — утренние и вечерние ритуалы, домашние "
             "заботы, еду, движение, порядок вокруг. Что сегодня получилось, что нет, "
             "и как это далось — легко, с усилием или почти незаметно?",
-            "Подумай о чём-то новом, что вошло сегодня в твою жизнь: перемена, "
-            "что-то хорошее, новый опыт или приключение, новое знание или что-то "
-            "новое о себе. Даже маленькое открытие стоит записи.",
+            "Что сегодня было не так, как обычно? Перемена, неожиданная встреча, "
+            "что-то хорошее, новый опыт, приключение — даже небольшой поворот в "
+            "течение дня. Достаточно того, что сегодня появилось в твоей жизни "
+            "впервые.",
             "Посмотри на день как на историю — что в нём было достойно слов «спасибо»? "
             "Это может быть человек, событие или мелочь. Подумай и о том, кому именно "
             "это можно сказать вслух.",
@@ -265,7 +266,7 @@ REFLECTION_PROMPTS = {
             "с другой стороны: чему хочется научиться или что развить в себе "
             "дополнительно — не обязательно что-то большое, достаточно одного "
             "небольшого направления.",
-            "Оглянись на только что написанное. Стало ли что-то яснее, пока шли ответы "
+            "Оглянись на написанное сегодня. Стало ли что-то яснее, пока шли ответы "
             "на эти вопросы — ответ, новая мысль, понимание, которого раньше не "
             "замечалось? Запиши это, даже если получится одна фраза.",
         ],
@@ -306,6 +307,14 @@ CUSTOM_EMOJI_IDS = {
     "🌌": "5217818964612108191",
     "✨": "5451636889717062286",
     "💡": "5422439311196834318",
+    "🌙": "5208554136039073738",
+    "🏠": "5416041192905265756",
+    "🤝": "5395732581780040886",
+    "📚": "5258046117932711905",
+    "🧭": "5213107179329953547",
+    "🌱": "5474417568053745249",
+    "✅": "5332533929020761310",
+    "🌅": "5402477260982731644",
     "❓": "5382187118216879236",
 }
 
@@ -1126,7 +1135,8 @@ def format_entry(chat_id, date, lang) -> str:
             current_period = period
             if period in PERIODS:
                 lines.append("")
-                lines.append(f"<b>{esc(t(lang, 'period_' + period))}</b>")
+                period_emoji, period_text = t(lang, "period_" + period).split(" ", 1)
+                lines.append(f"<b>{tg_emoji(period_emoji)} {esc(period_text)}</b>")
         emoji, text = topic_label(period, idx, lang)
         lines.append(f"<b>{tg_emoji(emoji)} {esc(text)}:</b> {esc(answer)}")
     return "\n".join(lines)
